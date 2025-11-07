@@ -63,18 +63,18 @@ class AggressiveOneMinScalpingBot:
         # Track bot-opened trades only
         self.bot_opened_trades = {}
         
-        # Trade history
-        self.trade_history_file = "aggressive_1min_scalping_history.json"
-        self.trade_history = self.load_trade_history()
+        # REAL TRADE HISTORY - For live trading only
+        self.real_trade_history_file = "aggressive_1min_scalping_real_history.json"
+        self.real_trade_history = self.load_real_trade_history()
+        
+        # Trading statistics for real trading
+        self.real_total_trades = 0
+        self.real_winning_trades = 0
+        self.real_total_pnl = 0.0
         
         # Precision settings
         self.quantity_precision = {}
         self.price_precision = {}
-        
-        # Trading statistics
-        self.total_trades = 0
-        self.winning_trades = 0
-        self.total_pnl = 0.0
         
         # Initialize Binance client
         try:
@@ -94,52 +94,62 @@ class AggressiveOneMinScalpingBot:
             self.setup_futures()
             self.load_symbol_precision()
     
-    def load_trade_history(self):
+    def load_real_trade_history(self):
+        """Load only REAL trading history"""
         try:
-            if os.path.exists(self.trade_history_file):
-                with open(self.trade_history_file, 'r') as f:
-                    return json.load(f)
+            if os.path.exists(self.real_trade_history_file):
+                with open(self.real_trade_history_file, 'r') as f:
+                    history = json.load(f)
+                    # Calculate statistics from loaded history
+                    self.real_total_trades = len(history)
+                    self.real_winning_trades = len([t for t in history if t.get('pnl', 0) > 0])
+                    self.real_total_pnl = sum(t.get('pnl', 0) for t in history)
+                    return history
             return []
         except Exception as e:
-            self.print_color(f"Error loading trade history: {e}", self.Fore.RED)
+            self.print_color(f"Error loading real trade history: {e}", self.Fore.RED)
             return []
     
-    def save_trade_history(self):
+    def save_real_trade_history(self):
+        """Save only REAL trading history"""
         try:
-            with open(self.trade_history_file, 'w') as f:
-                json.dump(self.trade_history, f, indent=2)
+            with open(self.real_trade_history_file, 'w') as f:
+                json.dump(self.real_trade_history, f, indent=2)
         except Exception as e:
-            self.print_color(f"Error saving trade history: {e}", self.Fore.RED)
+            self.print_color(f"Error saving real trade history: {e}", self.Fore.RED)
     
-    def add_trade_to_history(self, trade_data):
+    def add_real_trade_to_history(self, trade_data):
+        """Add trade to REAL trading history only"""
         try:
             trade_data['close_time'] = self.get_thailand_time()
             trade_data['close_timestamp'] = time.time()
-            self.trade_history.append(trade_data)
+            trade_data['trade_type'] = 'REAL'  # Mark as real trade
+            self.real_trade_history.append(trade_data)
             
-            # Update statistics
-            self.total_trades += 1
+            # Update REAL statistics
+            self.real_total_trades += 1
             pnl = trade_data.get('pnl', 0)
-            self.total_pnl += pnl
+            self.real_total_pnl += pnl
             if pnl > 0:
-                self.winning_trades += 1
+                self.real_winning_trades += 1
                 
-            if len(self.trade_history) > 200:  # Keep more history
-                self.trade_history = self.trade_history[-200:]
-            self.save_trade_history()
-            self.print_color(f"📝 Trade saved: {trade_data['pair']} {trade_data['direction']} P&L: ${pnl:.2f}", self.Fore.CYAN)
+            if len(self.real_trade_history) > 200:  # Keep more history
+                self.real_trade_history = self.real_trade_history[-200:]
+            self.save_real_trade_history()
+            self.print_color(f"📝 REAL Trade saved: {trade_data['pair']} {trade_data['direction']} P&L: ${pnl:.2f}", self.Fore.CYAN)
         except Exception as e:
-            self.print_color(f"Error adding trade to history: {e}", self.Fore.RED)
+            self.print_color(f"Error adding real trade to history: {e}", self.Fore.RED)
     
-    def show_trade_history(self, limit=15):
-        if not self.trade_history:
-            self.print_color("No trade history found", self.Fore.YELLOW)
+    def show_real_trade_history(self, limit=15):
+        """Show only REAL trading history"""
+        if not self.real_trade_history:
+            self.print_color("No REAL trade history found", self.Fore.YELLOW)
             return
         
-        self.print_color(f"\n🔥 AGGRESSIVE TRADING HISTORY (Last {min(limit, len(self.trade_history))} trades)", self.Fore.RED + self.Style.BRIGHT)
+        self.print_color(f"\n🔥 REAL TRADING HISTORY (Last {min(limit, len(self.real_trade_history))} trades)", self.Fore.RED + self.Style.BRIGHT)
         self.print_color("=" * 100, self.Fore.RED)
         
-        recent_trades = self.trade_history[-limit:]
+        recent_trades = self.real_trade_history[-limit:]
         for i, trade in enumerate(reversed(recent_trades)):
             pnl = trade.get('pnl', 0)
             pnl_color = self.Fore.GREEN + self.Style.BRIGHT if pnl > 0 else self.Fore.RED + self.Style.BRIGHT if pnl < 0 else self.Fore.YELLOW
@@ -149,19 +159,20 @@ class AggressiveOneMinScalpingBot:
             self.print_color(f"{i+1:2d}. {direction_icon} {trade['pair']} | Entry: ${trade.get('entry_price', 0):.4f} | Exit: ${trade.get('exit_price', 0):.4f} | P&L: ${pnl:.2f}", pnl_color)
             self.print_color(f"     TP: ${trade.get('take_profit', 0):.4f} | SL: ${trade.get('stop_loss', 0):.4f} | {close_reason} | Time: {trade.get('close_time', 'N/A')}", self.Fore.YELLOW)
     
-    def show_trading_stats(self):
-        if self.total_trades == 0:
+    def show_real_trading_stats(self):
+        """Show only REAL trading statistics"""
+        if self.real_total_trades == 0:
             return
             
-        win_rate = (self.winning_trades / self.total_trades) * 100
-        avg_trade = self.total_pnl / self.total_trades
+        win_rate = (self.real_winning_trades / self.real_total_trades) * 100
+        avg_trade = self.real_total_pnl / self.real_total_trades
         
-        self.print_color(f"\n📊 LIVE TRADING STATISTICS", self.Fore.CYAN + self.Style.BRIGHT)
+        self.print_color(f"\n📊 REAL TRADING STATISTICS", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color("=" * 60, self.Fore.CYAN)
-        self.print_color(f"Total Trades: {self.total_trades} | Winning Trades: {self.winning_trades}", self.Fore.WHITE)
-        self.print_color(f"Win Rate: {win_rate:.1f}%", self.Fore.GREEN + self.Style.BRIGHT if win_rate > 50 else self.Fore.YELLOW)
-        self.print_color(f"Total P&L: ${self.total_pnl:.2f}", self.Fore.GREEN + self.Style.BRIGHT if self.total_pnl > 0 else self.Fore.RED + self.Style.BRIGHT)
-        self.print_color(f"Average P&L per Trade: ${avg_trade:.2f}", self.Fore.WHITE)
+        self.print_color(f"Total REAL Trades: {self.real_total_trades} | Winning Trades: {self.real_winning_trades}", self.Fore.WHITE)
+        self.print_color(f"REAL Win Rate: {win_rate:.1f}%", self.Fore.GREEN + self.Style.BRIGHT if win_rate > 50 else self.Fore.YELLOW)
+        self.print_color(f"Total REAL P&L: ${self.real_total_pnl:.2f}", self.Fore.GREEN + self.Style.BRIGHT if self.real_total_pnl > 0 else self.Fore.RED + self.Style.BRIGHT)
+        self.print_color(f"Average REAL P&L per Trade: ${avg_trade:.2f}", self.Fore.WHITE)
     
     def get_thailand_time(self):
         now_utc = datetime.now(pytz.utc)
@@ -644,7 +655,7 @@ class AggressiveOneMinScalpingBot:
                 live_data = self.get_live_position_data(pair)
                 if not live_data:
                     # Position closed
-                    self.close_trade_with_cleanup(pair, trade, "AUTO CLOSE")
+                    self.close_real_trade_with_cleanup(pair, trade, "AUTO CLOSE")
                     closed_trades.append(pair)
                     continue
                     
@@ -660,7 +671,7 @@ class AggressiveOneMinScalpingBot:
             self.print_color(f"Monitoring error: {e}", self.Fore.RED)
             return []
 
-    def close_trade_with_cleanup(self, pair, trade, close_reason="MANUAL"):
+    def close_real_trade_with_cleanup(self, pair, trade, close_reason="MANUAL"):
         try:
             # Cancel existing orders
             open_orders = self.binance.futures_get_open_orders(symbol=pair)
@@ -680,11 +691,11 @@ class AggressiveOneMinScalpingBot:
             trade['close_reason'] = close_reason
             
             closed_trade = trade.copy()
-            self.add_trade_to_history(closed_trade)
+            self.add_real_trade_to_history(closed_trade)  # Save to REAL history only
             
             pnl_color = self.Fore.GREEN + self.Style.BRIGHT if final_pnl > 0 else self.Fore.RED + self.Style.BRIGHT
             direction_icon = "🟢 LONG" if trade['direction'] == 'LONG' else "🔴 SHORT"
-            self.print_color(f"\n🔚 TRADE CLOSED: {pair} {direction_icon}", pnl_color)
+            self.print_color(f"\n🔚 REAL TRADE CLOSED: {pair} {direction_icon}", pnl_color)
             self.print_color(f"   Final P&L: ${final_pnl:.2f} | Reason: {close_reason}", pnl_color)
             if canceled > 0:
                 self.print_color(f"   Cleaned up {canceled} order(s)", self.Fore.CYAN)
@@ -743,10 +754,10 @@ class AggressiveOneMinScalpingBot:
             closed_trades = self.monitor_positions()
             self.display_dashboard()
             
-            # Show stats every 5 cycles
+            # Show REAL stats every 5 cycles
             if hasattr(self, 'cycle_count') and self.cycle_count % 5 == 0:
-                self.show_trade_history(8)
-                self.show_trading_stats()
+                self.show_real_trade_history(8)
+                self.show_real_trading_stats()
             
             market_data = self.get_market_data()
             if market_data:
@@ -786,6 +797,7 @@ class AggressiveOneMinScalpingBot:
         self.print_color("🔥 STARTING AGGRESSIVE 1MIN LIVE TRADING BOT!", self.Fore.RED + self.Style.BRIGHT)
         self.print_color("⚠️  REAL MONEY TRADING - HIGH RISK! ⚠️", self.Fore.RED + self.Style.BRIGHT)
         self.print_color("🤖 AI FULLY CONTROLS: Entry, TP, SL, Direction", self.Fore.CYAN + self.Style.BRIGHT)
+        self.print_color("💾 REAL trades saved to: aggressive_1min_scalping_real_history.json", self.Fore.GREEN)
         self.cycle_count = 0
         
         while True:
@@ -799,8 +811,8 @@ class AggressiveOneMinScalpingBot:
                 
             except KeyboardInterrupt:
                 self.print_color(f"\n🛑 AGGRESSIVE TRADING STOPPED", self.Fore.RED + self.Style.BRIGHT)
-                self.show_trade_history(10)
-                self.show_trading_stats()
+                self.show_real_trade_history(10)
+                self.show_real_trading_stats()
                 break
             except Exception as e:
                 self.print_color(f"Main loop error: {e}", self.Fore.RED)
@@ -818,13 +830,68 @@ class AggressiveOneMinPaperTradingBot:
         
         self.paper_balance = 5000  # Higher paper balance for aggressive trading
         self.paper_positions = {}
-        self.paper_history = []
+        self.paper_history_file = "aggressive_1min_scalping_paper_history.json"
+        self.paper_history = self.load_paper_history()
         
         self.real_bot.print_color("🔥 AGGRESSIVE 1MIN PAPER TRADING BOT INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color(f"💰 Starting Paper Balance: ${self.paper_balance}", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color(f"🎯 Strategy: AGGRESSIVE 1MIN Scalping | TP: +1.2% | SL: -0.8%", self.Fore.MAGENTA + self.Style.BRIGHT)
         self.real_bot.print_color(f"🤖 AI Full Control: Entry, TP, SL, Direction", self.Fore.CYAN + self.Style.BRIGHT)
+        self.real_bot.print_color(f"💾 Paper trades saved to: {self.paper_history_file}", self.Fore.GREEN)
         
+    def load_paper_history(self):
+        """Load PAPER trading history only"""
+        try:
+            if os.path.exists(self.paper_history_file):
+                with open(self.paper_history_file, 'r') as f:
+                    return json.load(f)
+            return []
+        except Exception as e:
+            self.real_bot.print_color(f"Error loading paper trade history: {e}", self.Fore.RED)
+            return []
+    
+    def save_paper_history(self):
+        """Save PAPER trading history only"""
+        try:
+            with open(self.paper_history_file, 'w') as f:
+                json.dump(self.paper_history, f, indent=2)
+        except Exception as e:
+            self.real_bot.print_color(f"Error saving paper trade history: {e}", self.Fore.RED)
+    
+    def add_paper_trade_to_history(self, trade_data):
+        """Add trade to PAPER trading history only"""
+        try:
+            trade_data['close_time'] = self.real_bot.get_thailand_time()
+            trade_data['close_timestamp'] = time.time()
+            trade_data['trade_type'] = 'PAPER'  # Mark as paper trade
+            self.paper_history.append(trade_data)
+            
+            if len(self.paper_history) > 200:  # Keep more history
+                self.paper_history = self.paper_history[-200:]
+            self.save_paper_history()
+            self.real_bot.print_color(f"📝 PAPER Trade saved: {trade_data['pair']} {trade_data['direction']} P&L: ${trade_data.get('pnl', 0):.2f}", self.Fore.CYAN)
+        except Exception as e:
+            self.real_bot.print_color(f"Error adding paper trade to history: {e}", self.Fore.RED)
+    
+    def show_paper_trade_history(self, limit=15):
+        """Show only PAPER trading history"""
+        if not self.paper_history:
+            self.real_bot.print_color("No PAPER trade history found", self.Fore.YELLOW)
+            return
+        
+        self.real_bot.print_color(f"\n📝 PAPER TRADING HISTORY (Last {min(limit, len(self.paper_history))} trades)", self.Fore.GREEN + self.Style.BRIGHT)
+        self.real_bot.print_color("=" * 100, self.Fore.GREEN)
+        
+        recent_trades = self.paper_history[-limit:]
+        for i, trade in enumerate(reversed(recent_trades)):
+            pnl = trade.get('pnl', 0)
+            pnl_color = self.Fore.GREEN + self.Style.BRIGHT if pnl > 0 else self.Fore.RED + self.Style.BRIGHT if pnl < 0 else self.Fore.YELLOW
+            direction_icon = "🟢 LONG" if trade['direction'] == 'LONG' else "🔴 SHORT"
+            close_reason = trade.get('close_reason', 'MANUAL')
+            
+            self.real_bot.print_color(f"{i+1:2d}. {direction_icon} {trade['pair']} | Entry: ${trade.get('entry_price', 0):.4f} | Exit: ${trade.get('exit_price', 0):.4f} | P&L: ${pnl:.2f}", pnl_color)
+            self.real_bot.print_color(f"     TP: ${trade.get('take_profit', 0):.4f} | SL: ${trade.get('stop_loss', 0):.4f} | {close_reason} | Time: {trade.get('close_time', 'N/A')}", self.Fore.YELLOW)
+    
     def paper_execute_trade(self, decision):
         try:
             pair = decision["pair"]
@@ -926,7 +993,7 @@ class AggressiveOneMinPaperTradingBot:
                     trade['close_time'] = self.real_bot.get_thailand_time()
                     
                     self.paper_balance += pnl
-                    self.paper_history.append(trade.copy())
+                    self.add_paper_trade_to_history(trade.copy())  # Save to PAPER history only
                     closed_positions.append(pair)
                     
                     pnl_color = self.Fore.GREEN + self.Style.BRIGHT if pnl > 0 else self.Fore.RED + self.Style.BRIGHT
@@ -952,14 +1019,14 @@ class AggressiveOneMinPaperTradingBot:
         self.real_bot.print_color("=" * 70, self.Fore.CYAN)
         self.real_bot.print_color(f"Active Positions: {len(self.paper_positions)}", self.Fore.WHITE)
         self.real_bot.print_color(f"Balance: ${self.paper_balance:.2f}", self.Fore.WHITE + self.Style.BRIGHT)
-        self.real_bot.print_color(f"Total Trades: {total_trades}", self.Fore.WHITE)
+        self.real_bot.print_color(f"Total PAPER Trades: {total_trades}", self.Fore.WHITE)
         
         if total_trades > 0:
             win_rate = (winning_trades / total_trades) * 100
-            self.real_bot.print_color(f"Win Rate: {win_rate:.1f}%", self.Fore.GREEN + self.Style.BRIGHT if win_rate > 50 else self.Fore.YELLOW)
-            self.real_bot.print_color(f"Total P&L: ${total_pnl:.2f}", self.Fore.GREEN + self.Style.BRIGHT if total_pnl > 0 else self.Fore.RED + self.Style.BRIGHT)
+            self.real_bot.print_color(f"PAPER Win Rate: {win_rate:.1f}%", self.Fore.GREEN + self.Style.BRIGHT if win_rate > 50 else self.Fore.YELLOW)
+            self.real_bot.print_color(f"Total PAPER P&L: ${total_pnl:.2f}", self.Fore.GREEN + self.Style.BRIGHT if total_pnl > 0 else self.Fore.RED + self.Style.BRIGHT)
             avg_trade = total_pnl / total_trades
-            self.real_bot.print_color(f"Average P&L: ${avg_trade:.2f}", self.Fore.WHITE)
+            self.real_bot.print_color(f"Average PAPER P&L: ${avg_trade:.2f}", self.Fore.WHITE)
 
     def run_paper_trading_cycle(self):
         try:
@@ -985,6 +1052,10 @@ class AggressiveOneMinPaperTradingBot:
                 if qualified_signals > 0:
                     self.real_bot.print_color(f"🎯 {qualified_signals} qualified paper signals executed", self.Fore.GREEN + self.Style.BRIGHT)
             
+            # Show paper history every 8 cycles
+            if hasattr(self, 'paper_cycle_count') and self.paper_cycle_count % 8 == 0:
+                self.show_paper_trade_history(8)
+            
             self.get_paper_portfolio_status()
             
         except Exception as e:
@@ -995,11 +1066,11 @@ class AggressiveOneMinPaperTradingBot:
         self.real_bot.print_color("💸 NO REAL MONEY AT RISK", self.Fore.GREEN)
         self.real_bot.print_color("🤖 AI Full Control: Entry, TP, SL, Direction", self.Fore.CYAN)
         
-        cycle_count = 0
+        self.paper_cycle_count = 0
         while True:
             try:
-                cycle_count += 1
-                self.real_bot.print_color(f"\n🎯 PAPER CYCLE {cycle_count}", self.Fore.CYAN)
+                self.paper_cycle_count += 1
+                self.real_bot.print_color(f"\n🎯 PAPER CYCLE {self.paper_cycle_count}", self.Fore.CYAN)
                 self.real_bot.print_color("=" * 60, self.Fore.CYAN)
                 self.run_paper_trading_cycle()
                 self.real_bot.print_color(f"⏳ Waiting 25 seconds...", self.Fore.BLUE)
@@ -1017,10 +1088,10 @@ class AggressiveOneMinPaperTradingBot:
                     
                     self.real_bot.print_color(f"\n📊 FINAL PAPER TRADING RESULTS", self.Fore.CYAN + self.Style.BRIGHT)
                     self.real_bot.print_color("=" * 50, self.Fore.CYAN)
-                    self.real_bot.print_color(f"Total Trades: {total_trades}", self.Fore.WHITE)
-                    self.real_bot.print_color(f"Win Rate: {win_rate:.1f}%", self.Fore.GREEN)
-                    self.real_bot.print_color(f"Total P&L: ${total_pnl:.2f}", self.Fore.GREEN if total_pnl > 0 else self.Fore.RED)
-                    self.real_bot.print_color(f"Final Balance: ${self.paper_balance:.2f}", self.Fore.CYAN + self.Style.BRIGHT)
+                    self.real_bot.print_color(f"Total PAPER Trades: {total_trades}", self.Fore.WHITE)
+                    self.real_bot.print_color(f"PAPER Win Rate: {win_rate:.1f}%", self.Fore.GREEN)
+                    self.real_bot.print_color(f"Total PAPER P&L: ${total_pnl:.2f}", self.Fore.GREEN if total_pnl > 0 else self.Fore.RED)
+                    self.real_bot.print_color(f"Final PAPER Balance: ${self.paper_balance:.2f}", self.Fore.CYAN + self.Style.BRIGHT)
                 
                 break
             except Exception as e:
@@ -1043,6 +1114,7 @@ if __name__ == "__main__":
         if choice == "1":
             print("⚠️  WARNING: REAL MONEY TRADING! HIGH RISK! ⚠️")
             print("🤖 AI FULLY CONTROLS: Entry, TP, SL, Direction")
+            print("💾 REAL trades saved to: aggressive_1min_scalping_real_history.json")
             confirm = input("Type 'AGGRESSIVE' to confirm: ").strip()
             if confirm.upper() == 'AGGRESSIVE':
                 real_bot.start_trading()
