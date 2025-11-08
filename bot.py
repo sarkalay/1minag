@@ -33,7 +33,7 @@ if not COLORAMA_AVAILABLE:
     Back = DummyColors() 
     Style = DummyColors()
 
-class AggressiveOneMinScalpingBot:
+class AggressiveFifteenMinScalpingBot:
     def __init__(self):
         # Load config from .env file
         self.binance_api_key = os.getenv('BINANCE_API_KEY')
@@ -49,11 +49,11 @@ class AggressiveOneMinScalpingBot:
         # Thailand timezone
         self.thailand_tz = pytz.timezone('Asia/Bangkok')
         
-        # AGGRESSIVE 1MIN SCALPING PARAMETERS
+        # AGGRESSIVE 15MIN SCALPING PARAMETERS
         self.trade_size_usd = 100  # Increased size for aggressive trading
         self.leverage = 10  # Higher leverage
-        self.tp_percent = 0.012   # +1.2% - More aggressive TP
-        self.sl_percent = 0.008   # -0.8% - Tighter SL
+        self.tp_percent = 0.018   # +1.8% - More aggressive TP for 15min
+        self.sl_percent = 0.012   # -1.2% - Tighter SL for 15min
         
         # Multi-pair parameters - More pairs for more opportunities
         self.max_concurrent_trades = 8  # Increased concurrent trades
@@ -64,7 +64,7 @@ class AggressiveOneMinScalpingBot:
         self.bot_opened_trades = {}
         
         # REAL TRADE HISTORY - For live trading only
-        self.real_trade_history_file = "aggressive_1min_scalping_real_history.json"
+        self.real_trade_history_file = "aggressive_15min_scalping_real_history.json"
         self.real_trade_history = self.load_real_trade_history()
         
         # Trading statistics for real trading
@@ -79,10 +79,10 @@ class AggressiveOneMinScalpingBot:
         # Initialize Binance client
         try:
             self.binance = Client(self.binance_api_key, self.binance_secret)
-            self.print_color(f"🔥 AGGRESSIVE 1MIN SCALPING BOT ACTIVATED! 🔥", self.Fore.RED + self.Style.BRIGHT)
-            self.print_color(f"🎯 TP: +1.2% | SL: -0.8% | R:R = 1.5", self.Fore.GREEN + self.Style.BRIGHT)
+            self.print_color(f"🔥 AGGRESSIVE 15MIN SCALPING BOT ACTIVATED! 🔥", self.Fore.RED + self.Style.BRIGHT)
+            self.print_color(f"🎯 TP: +1.8% | SL: -1.2% | R:R = 1.5", self.Fore.GREEN + self.Style.BRIGHT)
             self.print_color(f"💰 Trade Size: ${self.trade_size_usd} | Leverage: {self.leverage}x", self.Fore.YELLOW + self.Style.BRIGHT)
-            self.print_color(f"⏰ Chart: 1MIN | Max Trades: {self.max_concurrent_trades}", self.Fore.MAGENTA + self.Style.BRIGHT)
+            self.print_color(f"⏰ Chart: 15MIN | Max Trades: {self.max_concurrent_trades}", self.Fore.MAGENTA + self.Style.BRIGHT)
             self.print_color(f"🎲 Pairs: {len(self.available_pairs)}", self.Fore.CYAN + self.Style.BRIGHT)
         except Exception as e:
             self.print_color(f"Binance initialization failed: {e}", self.Fore.RED)
@@ -329,21 +329,22 @@ class AggressiveOneMinScalpingBot:
             
             # AGGRESSIVE TRADING PROMPT - AI controls everything
             prompt = f"""
-            AGGRESSIVE 1-MINUTE SCALPING ANALYSIS for {pair}
+            AGGRESSIVE 15-MINUTE SCALPING ANALYSIS for {pair}
             
             CURRENT MARKET DATA:
             - Current Price: ${current_price:.6f}
-            - Price Change (5min): {price_change:.2f}%
+            - Price Change (15min): {price_change:.2f}%
             - Volume Change: {volume_change:.2f}%
             - Recent Prices: {market_data.get('prices', [])[-8:]} (latest on right)
             - Highs: {market_data.get('highs', [])[-5:]}
             - Lows: {market_data.get('lows', [])[-5:]}
             
-            AGGRESSIVE TRADING STRATEGY:
-            - Look for strong momentum signals
+            AGGRESSIVE 15MIN TRADING STRATEGY:
+            - Look for strong momentum signals on 15min timeframe
+            - Higher timeframe = bigger moves
             - High conviction entries only
             - Aggressive position sizing
-            - Quick scalps (1-3 minutes)
+            - Medium-term scalps (15-45 minutes)
             
             YOU CONTROL EVERYTHING:
             - Direction (LONG/SHORT/HOLD)
@@ -362,21 +363,21 @@ class AggressiveOneMinScalpingBot:
                 "reason": "brief aggressive reason"
             }}
             
-            Be aggressive but smart. Look for clear signals.
+            Be aggressive but smart. Look for clear signals on 15min chart.
             """
 
             headers = {"Authorization": f"Bearer {self.deepseek_key}", "Content-Type": "application/json"}
             data = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "You are an AGGRESSIVE 1-minute scalper. Take calculated risks. Return perfect JSON only with TP/SL."},
+                    {"role": "system", "content": "You are an AGGRESSIVE 15-minute scalper. Take calculated risks. Return perfect JSON only with TP/SL."},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.4,  # Slightly higher temperature for aggressive decisions
                 "max_tokens": 400
             }
             
-            self.print_color(f"🤖 AI Analyzing {pair} for AGGRESSIVE entries...", self.Fore.MAGENTA + self.Style.BRIGHT)
+            self.print_color(f"🤖 AI Analyzing {pair} for AGGRESSIVE 15min entries...", self.Fore.MAGENTA + self.Style.BRIGHT)
             response = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=data, timeout=30)
             
             if response.status_code == 200:
@@ -404,7 +405,7 @@ class AggressiveOneMinScalpingBot:
     def get_price_history(self, pair, limit=15):
         try:
             if self.binance:
-                klines = self.binance.futures_klines(symbol=pair, interval=Client.KLINE_INTERVAL_1MINUTE, limit=limit)
+                klines = self.binance.futures_klines(symbol=pair, interval=Client.KLINE_INTERVAL_15MINUTE, limit=limit)
                 prices = [float(k[4]) for k in klines]
                 highs = [float(k[2]) for k in klines]
                 lows = [float(k[3]) for k in klines]
@@ -453,7 +454,7 @@ class AggressiveOneMinScalpingBot:
             if current_price <= 0:
                 return {"action": "HOLD", "pair": pair, "direction": "HOLD", "confidence": 0, "reason": "Invalid price"}
             
-            self.print_color(f"🔍 Analyzing {pair} at ${current_price:.4f} for AGGRESSIVE entry...", self.Fore.BLUE + self.Style.BRIGHT)
+            self.print_color(f"🔍 Analyzing {pair} at ${current_price:.4f} for AGGRESSIVE 15min entry...", self.Fore.BLUE + self.Style.BRIGHT)
             market_data = self.get_price_history(pair)
             market_data['current_price'] = current_price
             
@@ -465,7 +466,7 @@ class AggressiveOneMinScalpingBot:
             else:
                 direction_icon = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
                 color = self.Fore.GREEN + self.Style.BRIGHT if direction == "LONG" else self.Fore.RED + self.Style.BRIGHT
-                self.print_color(f"🎯 AGGRESSIVE SIGNAL: {direction_icon} {pair} @ ${entry_price} ({confidence}%)", color)
+                self.print_color(f"🎯 AGGRESSIVE 15MIN SIGNAL: {direction_icon} {pair} @ ${entry_price} ({confidence}%)", color)
                 
                 return {
                     "action": "TRADE",
@@ -568,7 +569,7 @@ class AggressiveOneMinScalpingBot:
             direction_color = self.Fore.GREEN + self.Style.BRIGHT if direction == 'LONG' else self.Fore.RED + self.Style.BRIGHT
             direction_icon = "🟢 LONG" if direction == 'LONG' else "🔴 SHORT"
             
-            self.print_color(f"\n🎯 AGGRESSIVE LIVE TRADE EXECUTION", self.Fore.CYAN + self.Style.BRIGHT)
+            self.print_color(f"\n🎯 AGGRESSIVE 15MIN LIVE TRADE EXECUTION", self.Fore.CYAN + self.Style.BRIGHT)
             self.print_color("=" * 70, self.Fore.CYAN)
             self.print_color(f"{direction_icon} {pair}", direction_color)
             self.print_color(f"ENTRY PRICE: ${entry_price:.4f}", self.Fore.GREEN + self.Style.BRIGHT)
@@ -721,7 +722,7 @@ class AggressiveOneMinScalpingBot:
             return 0
 
     def display_dashboard(self):
-        self.print_color(f"\n🔥 AGGRESSIVE LIVE TRADING DASHBOARD - {self.get_thailand_time()}", self.Fore.RED + self.Style.BRIGHT)
+        self.print_color(f"\n🔥 AGGRESSIVE 15MIN LIVE TRADING DASHBOARD - {self.get_thailand_time()}", self.Fore.RED + self.Style.BRIGHT)
         self.print_color("=" * 90, self.Fore.RED)
         
         active_count = 0
@@ -794,10 +795,10 @@ class AggressiveOneMinScalpingBot:
             self.print_color(f"Cycle error: {e}", self.Fore.RED)
 
     def start_trading(self):
-        self.print_color("🔥 STARTING AGGRESSIVE 1MIN LIVE TRADING BOT!", self.Fore.RED + self.Style.BRIGHT)
+        self.print_color("🔥 STARTING AGGRESSIVE 15MIN LIVE TRADING BOT!", self.Fore.RED + self.Style.BRIGHT)
         self.print_color("⚠️  REAL MONEY TRADING - HIGH RISK! ⚠️", self.Fore.RED + self.Style.BRIGHT)
         self.print_color("🤖 AI FULLY CONTROLS: Entry, TP, SL, Direction", self.Fore.CYAN + self.Style.BRIGHT)
-        self.print_color("💾 REAL trades saved to: aggressive_1min_scalping_real_history.json", self.Fore.GREEN)
+        self.print_color("💾 REAL trades saved to: aggressive_15min_scalping_real_history.json", self.Fore.GREEN)
         self.cycle_count = 0
         
         while True:
@@ -806,8 +807,8 @@ class AggressiveOneMinScalpingBot:
                 self.print_color(f"\n🎯 AGGRESSIVE CYCLE {self.cycle_count}", self.Fore.RED + self.Style.BRIGHT)
                 self.print_color("=" * 60, self.Fore.RED)
                 self.run_trading_cycle()
-                self.print_color(f"⏳ Waiting 25 seconds for next cycle...", self.Fore.BLUE)
-                time.sleep(25)  # Slightly faster cycles for aggressive trading
+                self.print_color(f"⏳ Waiting 60 seconds for next cycle...", self.Fore.BLUE)
+                time.sleep(60)  # Longer cycles for 15min timeframe
                 
             except KeyboardInterrupt:
                 self.print_color(f"\n🛑 AGGRESSIVE TRADING STOPPED", self.Fore.RED + self.Style.BRIGHT)
@@ -816,10 +817,10 @@ class AggressiveOneMinScalpingBot:
                 break
             except Exception as e:
                 self.print_color(f"Main loop error: {e}", self.Fore.RED)
-                time.sleep(25)
+                time.sleep(60)
 
 
-class AggressiveOneMinPaperTradingBot:
+class AggressiveFifteenMinPaperTradingBot:
     def __init__(self, real_bot):
         self.real_bot = real_bot
         # Copy colorama attributes from real_bot
@@ -830,12 +831,12 @@ class AggressiveOneMinPaperTradingBot:
         
         self.paper_balance = 5000  # Higher paper balance for aggressive trading
         self.paper_positions = {}
-        self.paper_history_file = "aggressive_1min_scalping_paper_history.json"
+        self.paper_history_file = "aggressive_15min_scalping_paper_history.json"
         self.paper_history = self.load_paper_history()
         
-        self.real_bot.print_color("🔥 AGGRESSIVE 1MIN PAPER TRADING BOT INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
+        self.real_bot.print_color("🔥 AGGRESSIVE 15MIN PAPER TRADING BOT INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color(f"💰 Starting Paper Balance: ${self.paper_balance}", self.Fore.CYAN + self.Style.BRIGHT)
-        self.real_bot.print_color(f"🎯 Strategy: AGGRESSIVE 1MIN Scalping | TP: +1.2% | SL: -0.8%", self.Fore.MAGENTA + self.Style.BRIGHT)
+        self.real_bot.print_color(f"🎯 Strategy: AGGRESSIVE 15MIN Scalping | TP: +1.8% | SL: -1.2%", self.Fore.MAGENTA + self.Style.BRIGHT)
         self.real_bot.print_color(f"🤖 AI Full Control: Entry, TP, SL, Direction", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color(f"💾 Paper trades saved to: {self.paper_history_file}", self.Fore.GREEN)
         
@@ -1062,7 +1063,7 @@ class AggressiveOneMinPaperTradingBot:
             self.real_bot.print_color(f"Paper trading error: {e}", self.Fore.RED)
 
     def start_paper_trading(self):
-        self.real_bot.print_color("🔥 STARTING AGGRESSIVE 1MIN PAPER TRADING!", self.Fore.GREEN + self.Style.BRIGHT)
+        self.real_bot.print_color("🔥 STARTING AGGRESSIVE 15MIN PAPER TRADING!", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color("💸 NO REAL MONEY AT RISK", self.Fore.GREEN)
         self.real_bot.print_color("🤖 AI Full Control: Entry, TP, SL, Direction", self.Fore.CYAN)
         
@@ -1073,8 +1074,8 @@ class AggressiveOneMinPaperTradingBot:
                 self.real_bot.print_color(f"\n🎯 PAPER CYCLE {self.paper_cycle_count}", self.Fore.CYAN)
                 self.real_bot.print_color("=" * 60, self.Fore.CYAN)
                 self.run_paper_trading_cycle()
-                self.real_bot.print_color(f"⏳ Waiting 25 seconds...", self.Fore.BLUE)
-                time.sleep(25)
+                self.real_bot.print_color(f"⏳ Waiting 60 seconds...", self.Fore.BLUE)
+                time.sleep(60)
                 
             except KeyboardInterrupt:
                 self.real_bot.print_color(f"\n🛑 PAPER TRADING STOPPED", self.Fore.RED + self.Style.BRIGHT)
@@ -1096,14 +1097,14 @@ class AggressiveOneMinPaperTradingBot:
                 break
             except Exception as e:
                 self.real_bot.print_color(f"Paper trading error: {e}", self.Fore.RED)
-                time.sleep(25)
+                time.sleep(60)
 
 if __name__ == "__main__":
     try:
-        real_bot = AggressiveOneMinScalpingBot()
+        real_bot = AggressiveFifteenMinScalpingBot()
         
         print("\n" + "="*80)
-        print("🔥 AGGRESSIVE 1MIN AI SCALPING BOT")
+        print("🔥 AGGRESSIVE 15MIN AI SCALPING BOT")
         print("="*80)
         print("SELECT TRADING MODE:")
         print("1. 🔥 Live Trading (Real Money - HIGH RISK)")
@@ -1114,16 +1115,16 @@ if __name__ == "__main__":
         if choice == "1":
             print("⚠️  WARNING: REAL MONEY TRADING! HIGH RISK! ⚠️")
             print("🤖 AI FULLY CONTROLS: Entry, TP, SL, Direction")
-            print("💾 REAL trades saved to: aggressive_1min_scalping_real_history.json")
+            print("💾 REAL trades saved to: aggressive_15min_scalping_real_history.json")
             confirm = input("Type 'AGGRESSIVE' to confirm: ").strip()
             if confirm.upper() == 'AGGRESSIVE':
                 real_bot.start_trading()
             else:
                 print("Using Paper Trading mode...")
-                paper_bot = AggressiveOneMinPaperTradingBot(real_bot)
+                paper_bot = AggressiveFifteenMinPaperTradingBot(real_bot)
                 paper_bot.start_paper_trading()
         else:
-            paper_bot = AggressiveOneMinPaperTradingBot(real_bot)
+            paper_bot = AggressiveFifteenMinPaperTradingBot(real_bot)
             paper_bot.start_paper_trading()
             
     except Exception as e:
