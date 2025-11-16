@@ -1,6 +1,7 @@
 # indicators.py
 import pandas as pd
 import numpy as np
+from binance.client import Client  # ✅ ဒီလိုထည့်ပါ
 
 def calculate_ema(self, data, period):
     """Calculate Exponential Moving Average"""
@@ -36,7 +37,7 @@ def get_price_history(self, pair, limit=50):
             return self._get_mock_mtf_data(pair)
 
         intervals = {
-            '5m': (Client.KLINE_INTERVAL_5MINUTE, 50),
+            '5m': (Client.KLINE_INTERVAL_5MINUTE, 50),  # ✅ Client imported
             '15m': (Client.KLINE_INTERVAL_15MINUTE, 50),
             '1h': (Client.KLINE_INTERVAL_1HOUR, 50),
             '4h': (Client.KLINE_INTERVAL_4HOUR, 30),
@@ -47,40 +48,44 @@ def get_price_history(self, pair, limit=50):
         current_price = self.get_current_price(pair)
 
         for name, (interval, lim) in intervals.items():
-            klines = self.binance.futures_klines(symbol=pair, interval=interval, limit=lim)
-            if not klines:
+            try:
+                klines = self.binance.futures_klines(symbol=pair, interval=interval, limit=lim)
+                if not klines:
+                    continue
+
+                closes = [float(k[4]) for k in klines]
+                highs = [float(k[2]) for k in klines]
+                lows = [float(k[3]) for k in klines]
+                volumes = [float(k[5]) for k in klines]
+
+                ema9 = self.calculate_ema(closes, 9)
+                ema21 = self.calculate_ema(closes, 21)
+                rsi = self.calculate_rsi(closes, 14)[-1] if len(closes) > 14 else 50
+
+                crossover = 'NONE'
+                if len(ema9) >= 2 and len(ema21) >= 2:
+                    if ema9[-2] < ema21[-2] and ema9[-1] > ema21[-1]:
+                        crossover = 'GOLDEN'
+                    elif ema9[-2] > ema21[-2] and ema9[-1] < ema21[-1]:
+                        crossover = 'DEATH'
+
+                vol_spike = self.calculate_volume_spike(volumes)
+
+                mtf[name] = {
+                    'current_price': closes[-1],
+                    'change_1h': ((closes[-1] - closes[-2]) / closes[-2] * 100) if len(closes) > 1 else 0,
+                    'ema9': round(ema9[-1], 6) if ema9[-1] else 0,
+                    'ema21': round(ema21[-1], 6) if ema21[-1] else 0,
+                    'trend': 'BULLISH' if ema9[-1] > ema21[-1] else 'BEARISH',
+                    'crossover': crossover,
+                    'rsi': round(rsi, 1),
+                    'vol_spike': vol_spike,
+                    'support': round(min(lows[-10:]), 6),
+                    'resistance': round(max(highs[-10:]), 6)
+                }
+            except Exception as e:
+                self.print_color(f"⚠️ {name} timeframe error for {pair}: {e}", self.Fore.YELLOW)
                 continue
-
-            closes = [float(k[4]) for k in klines]
-            highs = [float(k[2]) for k in klines]
-            lows = [float(k[3]) for k in klines]
-            volumes = [float(k[5]) for k in klines]
-
-            ema9 = self.calculate_ema(closes, 9)
-            ema21 = self.calculate_ema(closes, 21)
-            rsi = self.calculate_rsi(closes, 14)[-1] if len(closes) > 14 else 50
-
-            crossover = 'NONE'
-            if len(ema9) >= 2 and len(ema21) >= 2:
-                if ema9[-2] < ema21[-2] and ema9[-1] > ema21[-1]:
-                    crossover = 'GOLDEN'
-                elif ema9[-2] > ema21[-2] and ema9[-1] < ema21[-1]:
-                    crossover = 'DEATH'
-
-            vol_spike = self.calculate_volume_spike(volumes)
-
-            mtf[name] = {
-                'current_price': closes[-1],
-                'change_1h': ((closes[-1] - closes[-2]) / closes[-2] * 100) if len(closes) > 1 else 0,
-                'ema9': round(ema9[-1], 6) if ema9[-1] else 0,
-                'ema21': round(ema21[-1], 6) if ema21[-1] else 0,
-                'trend': 'BULLISH' if ema9[-1] > ema21[-1] else 'BEARISH',
-                'crossover': crossover,
-                'rsi': round(rsi, 1),
-                'vol_spike': vol_spike,
-                'support': round(min(lows[-10:]), 6),
-                'resistance': round(max(highs[-10:]), 6)
-            }
 
         main = mtf.get('1h', {})
         return {
@@ -92,7 +97,7 @@ def get_price_history(self, pair, limit=50):
         }
 
     except Exception as e:
-        self.print_color(f"❌ MTF Analysis error: {e}", self.Fore.RED)
+        self.print_color(f"❌ MTF Analysis error for {pair}: {e}", self.Fore.RED)
         return {
             'current_price': self.get_current_price(pair),
             'price_change': 0,
@@ -102,6 +107,7 @@ def get_price_history(self, pair, limit=50):
         }
 
 def _get_mock_mtf_data(self, pair):
+    """Mock data for paper trading when Binance is not available"""
     price = self.get_current_price(pair)
     return {
         'current_price': price,
@@ -125,9 +131,9 @@ def get_current_price(self, pair):
         else:
             # Mock prices for paper trading
             mock_prices = {
-                "BNBUSDT": 300,
-                "SOLUSDT": 180, 
-                "AVAXUSDT": 35
+                "BNBUSDT": 300 + (time.time() % 100) - 50,  # Random fluctuation
+                "SOLUSDT": 180 + (time.time() % 80) - 40,
+                "AVAXUSDT": 35 + (time.time() % 20) - 10
             }
             return mock_prices.get(pair, 100)
     except:
@@ -135,6 +141,7 @@ def get_current_price(self, pair):
 
 # Attach to class
 from core import FullyAutonomous1HourAITrader
+import time  # ✅ time module ထည့်ပါ
 
 for func in [calculate_ema, calculate_rsi, calculate_volume_spike, get_price_history, _get_mock_mtf_data, get_current_price]:
     setattr(FullyAutonomous1HourAITrader, func.__name__, func)
