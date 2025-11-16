@@ -27,7 +27,7 @@ if not COLORAMA_AVAILABLE:
     Back = DummyColors()
     Style = DummyColors()
 
-class PaperTradingBot:
+class FullyAutonomous1HourPaperTrader:
     def __init__(self):
         self._initialize_bot()
         
