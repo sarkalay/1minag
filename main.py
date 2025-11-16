@@ -7,17 +7,27 @@ import time
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
+# main.py မှာ ဒီလိုထည့်ပါ
 def main():
-    """Main entry point for the AI Trading Bot"""
     try:
-        # Import all modules to ensure methods are attached
+        # Import all modules
         import core
         import indicators
         import ai_entry
         import ai_close
         import trade_execution
+        import trading_loop
         
-        # Create the main bot
+        # Check if learning is available
+        try:
+            from learn_script import SelfLearningAITrader
+            LEARN_SCRIPT_AVAILABLE = True
+            print("✅ Learning module loaded successfully!")
+        except ImportError as e:
+            LEARN_SCRIPT_AVAILABLE = False
+            print(f"❌ Learning module not available: {e}")
+        
+        # Create bot
         from core import FullyAutonomous1HourAITrader
         bot = FullyAutonomous1HourAITrader()
         
