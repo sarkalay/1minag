@@ -230,7 +230,7 @@ class FullyAutonomous1HourPaperTrader:
     # 8. RUN ONE CYCLE
     # ===================================================================
     # paper_trading.py - run_paper_trading_cycle function ကို ပြင်ပါ
-def run_paper_trading_cycle(self):
+    def run_paper_trading_cycle(self):
     self.display_paper_dashboard()
 
     # Monitor & Close
