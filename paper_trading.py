@@ -229,26 +229,36 @@ class FullyAutonomous1HourPaperTrader:
     # ===================================================================
     # 8. RUN ONE CYCLE
     # ===================================================================
-    def run_paper_trading_cycle(self):
-        self.display_paper_dashboard()
+    # paper_trading.py - run_paper_trading_cycle function ကို ပြင်ပါ
+def run_paper_trading_cycle(self):
+    self.display_paper_dashboard()
 
-        # Monitor & Close
-        self.monitor_paper_positions()
+    # Monitor & Close
+    self.monitor_paper_positions()
 
-        # Entry Logic (Only if budget allows)
-        if self.available_budget > 50 and len(self.paper_positions) < self.max_concurrent_trades:
-            for pair in self.available_pairs:
-                if pair in self.paper_positions:
+    # Entry Logic (Only if budget allows)
+    if self.available_budget > 50 and len(self.paper_positions) < self.max_concurrent_trades:
+        for pair in self.available_pairs:
+            if pair in self.paper_positions:
+                continue
+            try:
+                market_data = self.real_bot.get_price_history(pair)
+                
+                # Check if market data is valid
+                if not market_data or 'current_price' not in market_data:
+                    self.print_color(f"⚠️ Skipping {pair}: Invalid market data", self.Fore.YELLOW)
                     continue
-                try:
-                    market_data = self.real_bot.get_price_history(pair)
-                    ai_decision = self.real_bot.get_ai_trading_decision(pair, market_data)
-                    if ai_decision['decision'] in ['LONG', 'SHORT'] and ai_decision['confidence'] >= 65:
-                        self.paper_execute_trade(pair, ai_decision)
-                except:
-                    continue
-
-        time.sleep(1)
+                    
+                ai_decision = self.real_bot.get_ai_trading_decision(pair, market_data)
+                
+                if ai_decision and ai_decision['decision'] in ['LONG', 'SHORT'] and ai_decision['confidence'] >= 65:
+                    self.print_color(f"🎯 PAPER SIGNAL: {pair} {ai_decision['decision']} | Confidence: {ai_decision['confidence']}%", self.Fore.GREEN)
+                    self.paper_execute_trade(pair, ai_decision)
+                    time.sleep(1)  # Small delay between trades
+                    
+            except Exception as e:
+                self.print_color(f"⚠️ Paper trading error for {pair}: {e}", self.Fore.YELLOW)
+                continue
 
     # ===================================================================
     # 9. START PAPER TRADING
