@@ -43,14 +43,16 @@ if not COLORAMA_AVAILABLE:
     Style = DummyColors()
 
 # === CLASS DEFINITION ===
+# core.py မှာ ဒီလိုပြင်ပါ
 if LEARN_SCRIPT_AVAILABLE:
     class FullyAutonomous1HourAITrader(SelfLearningAITrader):
         def __init__(self):
-            super().__init__()
-            self._initialize_trading()
+            super().__init__()  # Learning module initialization
+            self._initialize_trading()  # Trading module initialization
 else:
     class FullyAutonomous1HourAITrader(object):
         def __init__(self):
+            # Fallback without learning
             self.mistakes_history = []
             self.learned_patterns = {}
             self.performance_stats = {
