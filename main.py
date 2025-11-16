@@ -1,0 +1,67 @@
+# main.py
+import os
+import sys
+import time
+
+# Add current directory to path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+
+def main():
+    """Main entry point for the AI Trading Bot"""
+    try:
+        # Import all modules to ensure methods are attached
+        import core
+        import indicators
+        import ai_entry
+        import ai_close
+        import trade_execution
+        
+        # Create the main bot
+        from core import FullyAutonomous1HourAITrader
+        bot = FullyAutonomous1HourAITrader()
+        
+        # Ask user for mode selection
+        print("\n" + "="*70)
+        print("🤖 FULLY AUTONOMOUS 1-HOUR AI TRADER")
+        print("="*70)
+        print("1. 🎯 REAL TRADING (Live Binance Account)")
+        print("2. 📝 PAPER TRADING (Virtual Simulation)")
+        print("3. ❌ EXIT")
+        
+        choice = input("\nSelect mode (1-3): ").strip()
+        
+        if choice == "1":
+            if bot.binance:
+                print(f"\n🚀 STARTING REAL TRADING...")
+                
+                # Import and start real trading
+                from trading_loop import start_real_trading
+                start_real_trading(bot)
+            else:
+                print(f"\n❌ Binance connection failed. Switching to paper trading...")
+                from paper_trading import FullyAutonomous1HourPaperTrader
+                paper_bot = FullyAutonomous1HourPaperTrader(bot)
+                paper_bot.start_paper_trading()
+                
+        elif choice == "2":
+            print(f"\n📝 STARTING PAPER TRADING...")
+            from paper_trading import FullyAutonomous1HourPaperTrader
+            paper_bot = FullyAutonomous1HourPaperTrader(bot)
+            paper_bot.start_paper_trading()
+            
+        elif choice == "3":
+            print(f"\n👋 Exiting...")
+            
+        else:
+            print(f"\n❌ Invalid choice. Exiting...")
+            
+    except KeyboardInterrupt:
+        print(f"\n🛑 Program stopped by user")
+    except Exception as e:
+        print(f"\n❌ Main execution error: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
