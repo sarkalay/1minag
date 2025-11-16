@@ -1,4 +1,4 @@
-# paper_trading_bot.py
+# paper_trading.py
 import os
 import json
 import time
@@ -6,6 +6,8 @@ import requests
 import re
 import pandas as pd
 import numpy as np
+import math
+import random
 from datetime import datetime
 import pytz
 from dotenv import load_dotenv
@@ -28,10 +30,11 @@ if not COLORAMA_AVAILABLE:
     Style = DummyColors()
 
 class FullyAutonomous1HourPaperTrader:
-    def __init__(self):
-        self._initialize_bot()
+    def __init__(self, real_bot=None):
+        self.real_bot = real_bot
+        self._initialize_paper_trader()
         
-    def _initialize_bot(self):
+    def _initialize_paper_trader(self):
         """Initialize paper trading bot"""
         self.Fore = Fore
         self.Style = Style
@@ -39,7 +42,7 @@ class FullyAutonomous1HourPaperTrader:
         self.thailand_tz = pytz.timezone('Asia/Bangkok')
         
         # API Keys (for AI decisions)
-        self.openrouter_key = os.getenv('OPENROUTER_API_KEY')
+        self.openrouter_key = os.getenv('OPENROUTER_API_KEY', "your_openrouter_api_key_here")
         
         # Paper Trading Settings
         self.monitoring_interval = 180  # 3 minutes
@@ -56,6 +59,14 @@ class FullyAutonomous1HourPaperTrader:
         
         # Market data cache
         self.last_mtf = {}
+        self.cycle_count = 0
+        
+        # Price history for realistic simulation
+        self.price_history = {
+            "BNBUSDT": [300],
+            "SOLUSDT": [180], 
+            "AVAXUSDT": [35]
+        }
         
         self.print_color("🤖 PAPER TRADING BOT INITIALIZED!", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color(f"💰 Virtual Budget: ${self.paper_balance}", self.Fore.GREEN + self.Style.BRIGHT)
@@ -133,7 +144,7 @@ class FullyAutonomous1HourPaperTrader:
         current_vol = volumes[-1]
         return current_vol > avg_vol * 1.8
 
-    def get_mock_price_history(self, pair):
+    def get_price_history(self, pair):
         """Generate realistic mock market data"""
         base_prices = {
             "BNBUSDT": 300,
@@ -141,59 +152,85 @@ class FullyAutonomous1HourPaperTrader:
             "AVAXUSDT": 35
         }
         
-        base_price = base_prices.get(pair, 100)
-        current_time = time.time()
+        # Initialize or update price history
+        if pair not in self.price_history:
+            self.price_history[pair] = [base_prices.get(pair, 100)]
         
-        # Simulate price movement based on time
-        price_variation = math.sin(current_time / 300) * 10  # 5-minute cycles
-        current_price = base_price + price_variation
+        current_prices = self.price_history[pair]
+        last_price = current_prices[-1]
         
-        # Generate realistic mock data
+        # Simulate realistic price movement
+        volatility = random.uniform(-2.0, 2.0)  # ±2% volatility
+        new_price = last_price * (1 + volatility / 100)
+        
+        # Add to history (keep last 100 prices)
+        current_prices.append(new_price)
+        if len(current_prices) > 100:
+            current_prices.pop(0)
+        
+        # Calculate technical indicators
+        if len(current_prices) >= 21:
+            ema9 = self.calculate_ema(current_prices, 9)[-1]
+            ema21 = self.calculate_ema(current_prices, 21)[-1]
+            rsi = self.calculate_rsi(current_prices, 14)[-1] if len(current_prices) >= 15 else 50
+        else:
+            ema9 = new_price * 1.01
+            ema21 = new_price * 0.99
+            rsi = 50
+        
+        # Determine trend and signals
+        trend = "BULLISH" if ema9 > ema21 else "BEARISH"
+        crossover = "GOLDEN" if len(current_prices) >= 2 and current_prices[-2] <= ema21 and new_price > ema21 else "DEATH" if len(current_prices) >= 2 and current_prices[-2] >= ema21 and new_price < ema21 else "NONE"
+        
+        # Mock volumes
+        volumes = [random.uniform(1000, 10000) for _ in range(20)] + [random.uniform(5000, 20000)]
+        vol_spike = self.calculate_volume_spike(volumes)
+        
         return {
-            'current_price': current_price,
-            'price_change': (price_variation / base_price) * 100,
-            'support_levels': [current_price * 0.97, current_price * 0.95],
-            'resistance_levels': [current_price * 1.03, current_price * 1.05],
+            'current_price': new_price,
+            'price_change': ((new_price - last_price) / last_price * 100),
+            'support_levels': [new_price * 0.97, new_price * 0.95],
+            'resistance_levels': [new_price * 1.03, new_price * 1.05],
             'mtf_analysis': {
                 '5m': {
-                    'trend': 'BULLISH' if price_variation > 0 else 'BEARISH',
-                    'crossover': 'GOLDEN' if price_variation > 2 else 'DEATH' if price_variation < -2 else 'NONE',
-                    'rsi': 65 if price_variation > 0 else 35,
-                    'vol_spike': True if current_time % 300 < 60 else False
+                    'trend': trend,
+                    'crossover': crossover,
+                    'rsi': round(rsi, 1),
+                    'vol_spike': vol_spike,
+                    'support': new_price * 0.98,
+                    'resistance': new_price * 1.02
                 },
                 '15m': {
-                    'trend': 'BULLISH' if price_variation > -1 else 'BEARISH',
+                    'trend': trend,
                     'crossover': 'NONE',
-                    'rsi': 55,
-                    'vol_spike': False
+                    'rsi': round(rsi + random.uniform(-5, 5), 1),
+                    'vol_spike': False,
+                    'support': new_price * 0.96,
+                    'resistance': new_price * 1.04
                 },
                 '1h': {
-                    'trend': 'BULLISH',
-                    'ema9': current_price * 1.005,
-                    'ema21': current_price * 0.995,
-                    'rsi': 52
+                    'trend': "BULLISH" if rsi > 50 else "BEARISH",
+                    'ema9': round(ema9, 4),
+                    'ema21': round(ema21, 4),
+                    'rsi': round(rsi, 1),
+                    'support': new_price * 0.94,
+                    'resistance': new_price * 1.06
                 },
                 '4h': {
-                    'trend': 'BULLISH',
-                    'support': current_price * 0.92,
-                    'resistance': current_price * 1.08
+                    'trend': "BULLISH",
+                    'support': new_price * 0.92,
+                    'resistance': new_price * 1.08
                 }
             }
         }
 
     def get_current_price(self, pair):
-        """Get current price with realistic fluctuations"""
-        base_prices = {
-            "BNBUSDT": 300,
-            "SOLUSDT": 180,
-            "AVAXUSDT": 35
-        }
-        base_price = base_prices.get(pair, 100)
-        
-        # Add some random fluctuation
-        import random
-        fluctuation = random.uniform(-0.5, 0.5)  # ±0.5% fluctuation
-        return base_price * (1 + fluctuation / 100)
+        """Get current price from history"""
+        if pair in self.price_history and self.price_history[pair]:
+            return self.price_history[pair][-1]
+        else:
+            base_prices = {"BNBUSDT": 300, "SOLUSDT": 180, "AVAXUSDT": 35}
+            return base_prices.get(pair, 100)
 
     # ===================================================================
     # 4. AI TRADING DECISIONS
@@ -204,7 +241,7 @@ class FullyAutonomous1HourPaperTrader:
         
         for attempt in range(max_retries):
             try:
-                if not self.openrouter_key:
+                if not self.openrouter_key or self.openrouter_key == "your_openrouter_api_key_here":
                     return self.get_fallback_decision(market_data)
 
                 current_price = market_data['current_price']
@@ -258,6 +295,7 @@ class FullyAutonomous1HourPaperTrader:
                     "max_tokens": 500
                 }
 
+                self.print_color(f"🧠 AI Analyzing {pair}...", self.Fore.MAGENTA)
                 response = requests.post("https://openrouter.ai/api/v1/chat/completions", 
                                        headers=headers, json=data, timeout=30)
                 
@@ -265,8 +303,11 @@ class FullyAutonomous1HourPaperTrader:
                     result = response.json()
                     ai_response = result['choices'][0]['message']['content'].strip()
                     return self.parse_ai_decision(ai_response, pair, current_price)
+                else:
+                    self.print_color(f"⚠️ AI API failed: {response.status_code}", self.Fore.YELLOW)
                     
             except Exception as e:
+                self.print_color(f"⚠️ AI attempt {attempt+1} failed: {e}", self.Fore.YELLOW)
                 if attempt == max_retries - 1:
                     return self.get_fallback_decision(market_data)
                 time.sleep(1)
@@ -287,8 +328,8 @@ class FullyAutonomous1HourPaperTrader:
                     "confidence": float(data.get('confidence', 50)),
                     "reasoning": data.get('reasoning', 'AI Analysis')
                 }
-        except:
-            pass
+        except Exception as e:
+            self.print_color(f"❌ AI parse failed: {e}", self.Fore.RED)
         return self.get_fallback_decision({'current_price': current_price})
 
     def get_fallback_decision(self, market_data):
@@ -334,13 +375,16 @@ class FullyAutonomous1HourPaperTrader:
         """Execute paper trade"""
         try:
             if len(self.paper_positions) >= self.max_concurrent_trades:
+                self.print_color(f"🚫 Max trades reached: {self.max_concurrent_trades}", self.Fore.RED)
                 return False
 
             size_usd = ai_decision['position_size_usd']
             if size_usd > self.available_budget:
-                size_usd = self.available_budget * 0.8  # Use 80% of available
+                self.print_color(f"🚫 Insufficient budget: ${size_usd:.2f} > ${self.available_budget:.2f}", self.Fore.RED)
+                return False
 
             if size_usd < 10:  # Minimum trade size
+                self.print_color(f"🚫 Trade too small: ${size_usd:.2f}", self.Fore.RED)
                 return False
 
             entry_price = ai_decision['entry_price']
@@ -407,27 +451,36 @@ class FullyAutonomous1HourPaperTrader:
             )
             duration = (time.time() - trade['entry_time']) / 60  # minutes
 
-            # Simple closing logic
+            # Smart closing logic
             should_close = False
             close_reason = "HOLD"
             
-            if pnl_percent >= 5:  # Take profit at 5%
+            # Profit taking
+            if pnl_percent >= 8:  # Take profit at 8%
                 should_close = True
                 close_reason = "TAKE_PROFIT"
-            elif pnl_percent <= -8:  # Stop loss at -8%
+            elif pnl_percent >= 4 and duration > 30:  # Take partial profit after 30min
+                should_close = True
+                close_reason = "PARTIAL_PROFIT"
+            # Stop loss
+            elif pnl_percent <= -10:  # Stop loss at -10%
                 should_close = True
                 close_reason = "STOP_LOSS"
-            elif duration > 60:  # Close after 60 minutes
+            elif pnl_percent <= -6 and duration > 20:  # Early stop if trending against
                 should_close = True
-                close_reason = "TIME_EXIT"
-            elif abs(pnl_percent) < 1 and duration > 30:  # Close if flat after 30min
+                close_reason = "EARLY_STOP"
+            # Time-based exits
+            elif duration > 120:  # Close after 120 minutes max
+                should_close = True
+                close_reason = "MAX_TIME"
+            elif abs(pnl_percent) < 2 and duration > 45:  # Close if flat after 45min
                 should_close = True
                 close_reason = "NO_MOVEMENT"
 
             return {
                 "should_close": should_close,
                 "close_reason": close_reason,
-                "confidence": 70 if should_close else 30,
+                "confidence": 80 if should_close else 30,
                 "reasoning": f"PnL: {pnl_percent:.1f}%, Duration: {duration:.1f}min"
             }
             
@@ -500,6 +553,7 @@ class FullyAutonomous1HourPaperTrader:
             if decision.get("should_close"):
                 reason = f"AI_CLOSE: {decision['close_reason']} - {decision['reasoning']}"
                 self.print_color(f"🤖 AI Decision: CLOSE {pair} - {decision['close_reason']}", self.Fore.YELLOW)
+                self.print_color(f"💭 Reason: {decision['reasoning']}", self.Fore.CYAN)
                 self.paper_close_trade_immediately(pair, trade, reason)
                 closed.append(pair)
                 time.sleep(1)  # Small delay between closes
@@ -586,7 +640,7 @@ class FullyAutonomous1HourPaperTrader:
                         
                     try:
                         # Get market data
-                        market_data = self.get_mock_price_history(pair)
+                        market_data = self.get_price_history(pair)
                         self.last_mtf = market_data.get('mtf_analysis', {})
                         
                         # Get AI decision
@@ -612,7 +666,7 @@ class FullyAutonomous1HourPaperTrader:
     # ===================================================================
     # 9. MAIN TRADING LOOP
     # ===================================================================
-    def start_trading(self):
+    def start_paper_trading(self):
         """Start the paper trading bot"""
         self.print_color("🚀 STARTING PAPER TRADING BOT...", self.Fore.MAGENTA + self.Style.BRIGHT)
         self.print_color("💰 VIRTUAL $500 PORTFOLIO", self.Fore.GREEN + self.Style.BRIGHT)
@@ -622,10 +676,10 @@ class FullyAutonomous1HourPaperTrader:
         print()
 
         try:
-            cycle_count = 0
+            self.cycle_count = 0
             while True:
-                cycle_count += 1
-                self.print_color(f"\n🔄 TRADING CYCLE {cycle_count}", self.Fore.BLUE + self.Style.BRIGHT)
+                self.cycle_count += 1
+                self.print_color(f"\n🔄 TRADING CYCLE {self.cycle_count}", self.Fore.BLUE + self.Style.BRIGHT)
                 self.print_color("═" * 40, self.Fore.BLUE)
                 
                 self.run_trading_cycle()
@@ -651,10 +705,7 @@ class FullyAutonomous1HourPaperTrader:
             
             self.print_color(f"💾 History saved to: {self.paper_history_file}", self.Fore.YELLOW)
 
-# Required imports for the mock data
-import math
-
-# Run the bot
+# Run the bot directly
 if __name__ == "__main__":
-    bot = PaperTradingBot()
-    bot.start_trading()
+    bot = FullyAutonomous1HourPaperTrader()
+    bot.start_paper_trading()
