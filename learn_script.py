@@ -4,6 +4,31 @@ import json
 import time
 from datetime import datetime
 
+# learn_script.py ရဲ့ ထိပ်ဆုံးမှာ ဒီလိုထည့်ပါ
+try:
+    from colorama import Fore, Style
+    COLORAMA_AVAILABLE = True
+except ImportError:
+    COLORAMA_AVAILABLE = False
+    class DummyColors:
+        def __getattr__(self, name): return ''
+    Fore = DummyColors()
+    Style = DummyColors()
+
+class SelfLearningAITrader:
+    def __init__(self):
+        # ... existing code ...
+        self.Fore = Fore
+        self.Style = Style
+        self.COLORAMA_AVAILABLE = COLORAMA_AVAILABLE
+
+    def print_color(self, text, color=""):
+        """Use colorama for colored output"""
+        if self.COLORAMA_AVAILABLE:
+            print(f"{color}{text}{self.Style.RESET_ALL}")
+        else:
+            print(text)
+
 class SelfLearningAITrader:
     def __init__(self):
         # Mistake history storage
