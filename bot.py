@@ -1509,75 +1509,137 @@ class FullyAutonomous1HourPaperTrader:
             return False
 
     def get_ai_close_decision(self, pair, trade):
-        """Ask AI whether to close paper position"""
-        try:
-            current_price = self.real_bot.get_current_price(pair)
-            market_data = self.real_bot.get_price_history(pair)
-            current_pnl = self.calculate_current_pnl(trade, current_price)
+    """Ask AI whether to close this position – NEW 3-LAYER ADAPTIVE EXIT SYSTEM"""
+    try:
+        current_price = self.get_current_price(pair)
+        market_data = self.get_price_history(pair)
+        current_pnl = self.calculate_current_pnl(trade, current_price)
+        peak_pnl = trade.get('peak_pnl', current_pnl)  # သင့်ကုဒ်ထဲမှာ peak_pnl မှတ်ထားဖို့ လိုတယ်
+        if current_pnl > peak_pnl:
+            trade['peak_pnl'] = current_pnl  # update peak
+
+        # ATR(14) ကို ယူမယ် (သင့်ကုဒ်ထဲမှာ get_atr ရှိရင် သုံးပါ)
+        atr = market_data.get('atr_14', 0.0)
+        atr_pct = (atr / trade['entry_price']) * 100 if atr else 0.0
+
+        # Trailing distance တွက်မယ်
+        trail_distance = 2.0 * atr
+        trail_distance_pct = (trail_distance / trade['entry_price']) * 100
+
+        prompt = f"""
+=== ADAPTIVE EXIT SYSTEM – NO FIXED TP/SL ===
+
+CURRENT ACTIVE TRADE:
+- Pair: {pair}
+- Direction: {trade['direction']}
+- Entry Price: ${trade['entry_price']:.4f}
+- Current Price: ${current_price:.4f}
+- Current unrealized PnL: {current_pnl:.2f}%
+- Highest profit reached so far: {peak_pnl:.2f}%
+- Leverage: {trade['leverage']}x
+- Trade Age: {(time.time() - trade['entry_time']) / 60:.1f} minutes
+- Current ATR(14): {atr:.4f} ({atr_pct:.2f}%)
+- Trailing distance (2×ATR): {trail_distance_pct:.2f}%
+
+MARKET CONDITIONS:
+- 1H Change: {market_data.get('price_change_1h', 0):+.2f}%
+- 4H Change: {market_data.get('price_change_4h', 0):+.2f}%
+- Support levels: {market_data.get('support_levels', [])}
+- Resistance levels: {market_data.get('resistance_levels', [])}
+- RSI(14) 1H: {market_data.get('rsi_1h', 0):.1f}
+- RSI(14) 4H: {market_data.get('rsi_4h', 0):.1f}
+- Recent volume drop: {market_data.get('volume_drop_percent', 0):.1f}% from peak
+- Failed to make new high/low in last 12 candles: {market_data.get('no_new_extreme', False)}
+
+=== 3-LAYER ADAPTIVE EXIT RULES (MUST FOLLOW EXACTLY) ===
+
+LAYER 1 – PARTIAL PROFIT + FREE RIDE
+→ If current PnL ≥ +9.0% → close 60% immediately, move remaining stop to entry +0.5%
+
+LAYER 2 – VOLATILITY TRAILING (for remaining or full position)
+→ Trailing distance = 2.0 × ATR(14)
+→ Long:  trail below recent 1H/4H swing low
+→ Short: trail above recent 1H/4H swing high
+
+LAYER 3 – MOMENTUM EXHAUSTION (highest priority)
+Close FULL position if 3 out of 4:
+1. RSI divergence on 1H or 4H
+2. Volume dropped ≥40% from peak
+3. No new high/low in last 12 candles
+4. Current candle closed opposite with ≥60% body
+
+HARD SAFETY (non-negotiable)
+→ Never let winner become loser: if peak ≥ +8% and now ≤ +3% → close all
+→ Absolute max loss: -5.0% PnL → STOP LOSS immediately
+
+Now decide right now: CONTINUE or CLOSE (and which layer triggered).
+
+Return ONLY valid JSON:
+{{
+    "should_close": true/false,
+    "close_type": "PARTIAL_60" | "FULL_TAKE_PROFIT" | "STOP_LOSS" | "TRAILING_HIT" | "MOMENTUM_EXHAUSTION" | "WINNER_TURN_LOSER",
+    "close_reason": "short explanation",
+    "confidence": 85-100,
+    "reasoning": "clear step-by-step why this layer triggered"
+}}
+"""
+
+        headers = {
+            "Authorization": f"Bearer {self.openrouter_key}",
+            "Content-Type": "application/json",
+        }
+        
+        data = {
+            "model": "deepseek/deepseek-chat-v3.1",
+            "messages": [
+                {"role": "system", "content": "You are a professional crypto trader using a strict 3-layer adaptive exit system. Never use fixed % TP/SL. Always follow the exact rules above."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "max_tokens": 800
+        }
+        
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=45)
+        
+        if response.status_code == 200:
+            result = response.json()
+            ai_response = result['choices'][0]['message']['content'].strip()
             
-            prompt = f"""
-            SHOULD WE CLOSE THIS PAPER TRADING POSITION? (3MINUTE MONITORING)
-            
-            CURRENT ACTIVE PAPER TRADE:
-            - Pair: {pair}
-            - Direction: {trade['direction']}
-            - Entry Price: ${trade['entry_price']:.4f}
-            - Current Price: ${current_price:.4f}
-            - PnL: {current_pnl:.2f}%
-            - Position Size: ${trade['position_size_usd']:.2f}
-            - Leverage: {trade['leverage']}x
-            - Trade Age: {(time.time() - trade['entry_time']) / 60:.1f} minutes
-            
-            MARKET CONDITIONS:
-            - 1H Change: {market_data.get('price_change', 0):.2f}%
-            - Support: {market_data.get('support_levels', [])}
-            - Resistance: {market_data.get('resistance_levels', [])}
-            
-            Should we CLOSE this paper position now?
-            
-            Return JSON:
-            {{
-                "should_close": true/false,
-                "close_reason": "TAKE_PROFIT" | "STOP_LOSS" | "TREND_REVERSAL" | "TIME_EXIT",
-                "confidence": 0-100,
-                "reasoning": "Detailed analysis"
-            }}
-            """
-            
-            headers = {
-                "Authorization": f"Bearer {self.real_bot.openrouter_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com",
-                "X-Title": "Fully Autonomous AI Paper Trader"
-            }
-            
-            data = {
-                "model": "deepseek/deepseek-chat-v3.1",
-                "messages": [
-                    {"role": "system", "content": "You are an AI paper trader monitoring active positions every 3 minute. Decide whether to close paper positions based on current market conditions and technical analysis."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 600
-            }
-            
-            response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=45)
-            
-            if response.status_code == 200:
-                result = response.json()
-                ai_response = result['choices'][0]['message']['content'].strip()
+            json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group()
+                decision = json.loads(json_str)
                 
-                json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group()
-                    close_decision = json.loads(json_str)
-                    return close_decision
-                    
-            return {"should_close": False, "close_reason": "AI_UNAVAILABLE", "confidence": 0, "reasoning": "AI analysis failed"}
-            
-        except Exception as e:
-            self.real_bot.print_color(f"PAPER: AI close decision error: {e}", self.Fore.RED)
-            return {"should_close": False, "close_reason": "ERROR", "confidence": 0, "reasoning": f"Error: {e}"}
+                # အပိုဆုံး လုံခြုံအောင် -5% ကျော်ရင် force close
+                if current_pnl <= -5.0:
+                    decision = {
+                        "should_close": True,
+                        "close_type": "STOP_LOSS",
+                        "close_reason": "Hard -5% stop-loss rule triggered",
+                        "confidence": 100,
+                        "reasoning": f"Current PnL {current_pnl:.2f}% ≤ -5.0% → forced stop-loss"
+                    }
+                
+                return decision
+                
+        # fallback
+        return {
+            "should_close": current_pnl <= -5.0,
+            "close_type": "STOP_LOSS" if current_pnl <= -5.0 else "CONTINUE",
+            "close_reason": "AI timeout – safety fallback",
+            "confidence": 0,
+            "reasoning": "API error or timeout"
+        }
+        
+    except Exception as e:
+        self.print_color(f"AI close decision error: {e}", self.Fore.RED)
+        return {
+            "should_close": current_pnl <= -5.0,
+            "close_type": "STOP_LOSS",
+            "close_reason": "Exception fallback",
+            "confidence": 0,
+            "reasoning": str(e)
+        }
 
     def paper_execute_trade(self, pair, ai_decision):
         """Execute paper trade WITHOUT TP/SL orders"""
