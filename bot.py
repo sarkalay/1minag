@@ -993,8 +993,8 @@ def execute_ai_trade(self, pair, ai_decision):
             'ai_confidence': confidence,
             'ai_reasoning': reasoning,
             'entry_time_th': self.get_thailand_time(),
-            'has_tp_sl': False  # NEW: Mark as no TP/SL
-            "peak_pnl": 0.0,
+            'has_tp_sl': False,  # NEW: Mark as no TP/SL
+            "peak_pnl": 0.0
         }
         
         self.print_color(f"✅ TRADE EXECUTED (NO TP/SL): {pair} {decision} | Leverage: {leverage}x", self.Fore.GREEN + self.Style.BRIGHT)
