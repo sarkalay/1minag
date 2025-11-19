@@ -1510,7 +1510,6 @@ class FullyAutonomous1HourPaperTrader:
             return False
 
     def get_ai_close_decision(self, pair, trade):
-    
     try:
         current_price = self.get_current_price(pair)
         market_data = self.get_price_history(pair)
