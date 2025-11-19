@@ -1509,72 +1509,68 @@ class FullyAutonomous1HourPaperTrader:
             self.real_bot.print_color(f"❌ PAPER: Immediate close failed: {e}", self.Fore.RED)
             return False
 
-        def get_ai_close_decision(self, pair, trade):
+         def get_ai_close_decision(self, pair, trade):
         """3-LAYER ADAPTIVE EXIT SYSTEM – NO FIXED TP/SL (2025 LIVE VERSION)"""
         try:
             current_price = self.get_current_price(pair)
-            market_data = self.get_price_history(pair)
             current_pnl = self.calculate_current_pnl(trade, current_price)
 
-            # PEAK PNL UPDATE – အရမ်းအရေးကြီးတယ်
+            # === PEAK PNL UPDATE ===
             if 'peak_pnl' not in trade:
                 trade['peak_pnl'] = current_pnl
             if current_pnl > trade['peak_pnl']:
                 trade['peak_pnl'] = current_pnl
 
-            # ATR(14) ယူမယ် (မရှိရင် တွက်မယ်)
-            mtf = market_data.get('mtf_analysis', {})
-            atr_14 = mtf.get('1h', {}).get('atr_14', 0)
-            if atr_14 == 0:
-                try:
-                    klines = self.binance.futures_klines(symbol=pair, interval='1h', limit=50)
-                    closes = [float(k[4]) for k in klines]
-                    highs = [float(k[2]) for k in klines]
-                    lows = [float(k[3]) for k in klines]
-                    tr_list = []
-                    for i in range(1, len(closes)):
-                        tr = max(highs[i] - lows[i],
-                                 abs(highs[i] - closes[i-1]),
-                                 abs(lows[i] - closes[i-1]))
-                        tr_list.append(tr)
-                    atr_14 = sum(tr_list[-14:]) / 14 if len(tr_list) >= 14 else 0.001
-                except:
-                    atr_14 = 0.001
+            # === HARD -5% STOP LOSS (ဘယ်လို AI ပြောပြော မလွတ်စေနဲ့) ===
+            if current_pnl <= -5.0:
+                return {
+                    "should_close": True,
+                    "close_type": "STOP_LOSS",
+                    "close_reason": "Hard -5% max loss rule",
+                    "confidence": 100,
+                    "reasoning": f"PnL {current_pnl:.2f}% hit absolute max loss limit"
+                }
+
+            # === ATR(14) ယူမယ် (မရှိရင် ရိုးရိုး တွက်မယ်) ===
+            try:
+                klines = self.binance.futures_klines(symbol=pair, interval='1h', limit=50)
+                highs = [float(k[2]) for k in klines]
+                lows = [float(k[3]) for k in klines]
+                closes = [float(k[4]) for k in klines]
+                tr_list = []
+                for i in range(1, len(closes)):
+                    tr = max(highs[i] - lows[i],
+                             abs(highs[i] - closes[i-1]),
+                             abs(lows[i] - closes[i-1]))
+                    tr_list.append(tr)
+                atr_14 = sum(tr_list[-14:]) / 14 if len(tr_list) >= 14 else 0.001
+            except:
+                atr_14 = 0.001
 
             atr_pct = (atr_14 / trade['entry_price']) * 100
             trail_pct = 2.0 * atr_pct
 
             prompt = f"""
-=== 3-LAYER ADAPTIVE EXIT – NO FIXED TP/SL ===
+3-LAYER ADAPTIVE EXIT – NO FIXED TP/SL
 
-TRADE:
-- Pair: {pair}
-- Direction: {trade['direction']}
-- Entry: ${trade['entry_price']:.4f}
-- Current: ${current_price:.4f}
-- PnL: {current_pnl:+.2f}%
-- Peak Profit: {trade['peak_pnl']:+.2f}%
-- Leverage: {trade['leverage']}x
-- ATR(14): {atr_14:.5f} ({atr_pct:+.2f}%)
-- 2×ATR Trail: {trail_pct:+.2f}%
+Pair: {pair}
+Direction: {trade['direction']}
+Entry: ${trade['entry_price']:.4f}
+Current: ${current_price:.4f}
+PnL: {current_pnl:+.2f}%
+Peak Profit: {trade['peak_pnl']:+.2f}%
+Leverage: {trade['leverage']}x
+ATR(14): {atr_pct:+.2f}%
+2×ATR Trail: {trail_pct:+.2f}%
 
-RULES (MUST FOLLOW EXACTLY):
-1. If PnL ≥ +9.0% → close 60%, rest breakeven
-2. Trail at 2×ATR from swing
-3. Close full if momentum exhaustion (≥3/4 signals)
-4. If peak ≥ +8% and now ≤ +3% → close all
-5. Max loss -5.0% → immediate stop
+RULES:
+1. PnL ≥ +9.0% → close 60%
+2. Trail at 2×ATR
+3. Momentum exhaustion → close full
+4. Peak ≥ +8% → now ≤ +3% → close all
+5. Max loss -5.0% → close (already handled above)
 
-Decide NOW.
-
-Return ONLY JSON:
-{{
-    "should_close": true/false,
-    "close_type": "PARTIAL_60" | "FULL_TRAIL" | "STOP_LOSS" | "MOMENTUM_EXHAUSTION" | "WINNER_TURN_LOSER",
-    "close_reason": "short reason",
-    "confidence": 90-100,
-    "reasoning": "step by step"
-}}
+Decide NOW. Return ONLY JSON.
 """
 
             headers = {
@@ -1584,45 +1580,45 @@ Return ONLY JSON:
             data = {
                 "model": "deepseek/deepseek-chat-v3.1",
                 "messages": [
-                    {"role": "system", "content": "You are a professional crypto futures trader. Use ONLY the 3-layer adaptive exit system. Never suggest fixed TP/SL."},
+                    {"role": "system", "content": "You are a pro crypto trader. Use ONLY the 3-layer adaptive exit rules. Never suggest fixed TP/SL."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.15,
-                "max_tokens": 600
+                "temperature": 0.1,
+                "max_tokens": 500
             }
 
-            response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=40)
+            response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=35)
 
             if response.status_code == 200:
                 text = response.json()['choices'][0]['message']['content']
-                import re, json
-                m = re.search(r'\{.*\}', text, re.DOTALL)
-                if m:
-                    decision = json.loads(m.group())
+                import re
+                import json
+                match = re.search(r'\{.*\}', text, re.DOTALL)
+                if match:
+                    try:
+                        decision = json.loads(match.group())
+                        return decision
+                    except:
+                        pass
 
-                    # HARD -5% STOP LOSS (ဘယ်လို AI ပြောပြော မလွတ်စေနဲ့)
-                    if current_pnl <= -5.0:
-                        decision = {
-                            "should_close": True,
-                            "close_type": "STOP_LOSS",
-                            "close_reason": "Hard -5% rule triggered",
-                            "confidence": 100,
-                            "reasoning": f"Current PnL {current_pnl:.2f}% ≤ -5.0%"
-                        }
-                    return decision
-
-            # API ပြဿနာဖြစ်ရင်တောင် -5% ကျော်ရင် ပိတ်
-            if current_pnl <= -5.0:
-                return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Safety fallback", "confidence": 100}
-
-            return {"should_close": False, "close_reason": "No signal", "confidence": 0}
+            # Fallback: အကုန်ပျက်ရင်တောင် အမြတ်ရှိနေရင် ဆက်ထားမယ်
+            return {
+                "should_close": False,
+                "close_type": "CONTINUE",
+                "close_reason": "No clear signal",
+                "confidence": 70,
+                "reasoning": "API/parse failed – holding position"
+            }
 
         except Exception as e:
             self.print_color(f"AI close error: {e}", self.Fore.RED)
-            if current_pnl <= -5.0:
-                return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Exception + max loss"}
-            return {"should_close": False}
-
+            return {
+                "should_close": current_pnl <= -5.0,
+                "close_type": "STOP_LOSS" if current_pnl <= -5.0 else "CONTINUE",
+                "close_reason": "Exception fallback",
+                "confidence": 0,
+                "reasoning": str(e)
+            }
     def paper_execute_trade(self, pair, ai_decision):
         """Execute paper trade WITHOUT TP/SL orders"""
         try:
