@@ -1086,31 +1086,47 @@ Return ONLY JSON:
             "max_tokens": 600
         }
 
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=40)
+                if response.status_code == 200:
+            try:
+                text = response.json()['choices'][0]['message']['content']
+                import re, json
+                m = re.search(r'\{.*\}', text, re.DOTALL)
+                if m:
+                    decision = json.loads(m.group())
 
-        if response.status_code == 200:
-            text = response.json()['choices'][0]['message']['content']
-            import re, json
-            m = re.search(r'\{.*\}', text, re.DOTALL)
-            if m:
-                decision = json.loads(m.group())
+                    # HARD -5% STOP LOSS ကတော့ မလွတ်စေနဲ့
+                    if current_pnl <= -5.0:
+                        decision = {
+                            "should_close": True,
+                            "close_type": "STOP_LOSS",
+                            "close_reason": "Hard -5% rule triggered",
+                            "confidence": 100,
+                            "reasoning": f"Current PnL {current_pnl:.2f}% ≤ -5.0%"
+                        }
+                    return decision
+                else:
+                    self.real_bot.print_color(f"3-Layer: No JSON found in response (safe fallback)", self.Fore.YELLOW)
+            except Exception as e:
+                self.real_bot.print_color(f"3-Layer: JSON parse failed → safe mode ({e})", self.Fore.YELLOW)
 
-                # HARD -5% STOP LOSS (ဘယ်လို AI ပြောပြော မလွတ်စေနဲ့)
-                if current_pnl <= -5.0:
-                    decision = {
-                        "should_close": True,
-                        "close_type": "STOP_LOSS",
-                        "close_reason": "Hard -5% rule triggered",
-                        "confidence": 100,
-                        "reasoning": f"Current PnL {current_pnl:.2f}% ≤ -5.0%"
-                    }
-                return decision
-
-        # API ပြဿနာဖြစ်ရင်တောင် -5% ကျော်ရင် ပိတ်
+        # ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+        # ဒီကြောင်းတွေက အဓိက အရေးကြီးဆုံး!!!
+        # ဘာဖြစ်ဖြစ် ဒီနေရာကို အမြဲ ရောက်ရမယ်
         if current_pnl <= -5.0:
-            return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Safety fallback", "confidence": 100}
+            return {
+                "should_close": True,
+                "close_type": "STOP_LOSS",
+                "close_reason": "Safety fallback -5%",
+                "confidence": 100,
+                "reasoning": "Hard stop loss triggered"
+            }
 
-        return {"should_close": False, "close_reason": "No signal", "confidence": 0}
+        return {
+            "should_close": False,
+            "close_reason": "NO_SIGNAL_OR_ERROR",
+            "confidence": 0,
+            "reasoning": "AI response invalid or unavailable"
+        }
 
     except Exception as e:
         self.print_color(f"AI close error: {e}", self.Fore.RED)
