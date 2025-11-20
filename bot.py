@@ -1514,6 +1514,10 @@ class FullyAutonomous1HourPaperTrader:
             current_price = self.get_current_price(pair)
             current_pnl = self.calculate_current_pnl(trade, current_price)
 
+        except:
+            current_price = trade['entry_price']
+            current_pnl = 0.0
+
             # Peak PnL update
             if 'peak_pnl' not in trade:
                 trade['peak_pnl'] = current_pnl
