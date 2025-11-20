@@ -1508,7 +1508,7 @@ class FullyAutonomous1HourPaperTrader:
             self.real_bot.print_color(f"❌ PAPER: Immediate close failed: {e}", self.Fore.RED)
             return False
 
-        def get_ai_close_decision(self, pair, trade):
+    def get_ai_close_decision(self, pair, trade):
         """3-LAYER ADAPTIVE EXIT SYSTEM – 100% SAFE & WORKING (Paper Trading)"""
         try:
             current_price = self.get_current_price(pair)
