@@ -1474,8 +1474,8 @@ class FullyAutonomous1HourPaperTrader:
             self.real_bot.print_color(f"❌ PAPER: Reverse position execution failed: {e}", self.Fore.RED)
             return False
 
-            def get_ai_close_decision(self, pair, trade):
-        """3-LAYER ADAPTIVE EXIT – အပြည့်အစုံ prompt ပါ၊ crash လုံးဝမဖြစ်တော့တဲ့ ဗားရှင်း"""
+        def get_ai_close_decision(self, pair, trade):
+           """3-LAYER ADAPTIVE EXIT – အပြည့်အစုံ prompt ပါ၊ crash လုံးဝမဖြစ်တော့တဲ့ ဗားရှင်း"""
         
         # Default values (ဘာမှမရရင်တောင် အဆင်ပြေအောင်)
         current_price = trade['entry_price']
