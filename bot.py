@@ -182,7 +182,7 @@ def _initialize_trading(self):
         self.print_color(f"🤖 FULLY AUTONOMOUS AI TRADER ACTIVATED! 🤖", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color(f"💰 TOTAL BUDGET: ${self.total_budget}", self.Fore.GREEN + self.Style.BRIGHT)
         self.print_color(f"🔄 REVERSE POSITION FEATURE: ENABLED", self.Fore.MAGENTA + self.Style.BRIGHT)
-        self.print_color(f"🎯 NO TP/SL - AI MANUAL CLOSE ONLY", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.print_color(f"🎯 3-LAYER ADAPTIVE EXIT SYSTEM: ENABLED", self.Fore.YELLOW + self.Style.BRIGHT)
         self.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
         self.print_color(f"📊 Max Positions: {self.max_concurrent_trades}", self.Fore.YELLOW + self.Style.BRIGHT)
         if LEARN_SCRIPT_AVAILABLE:
@@ -953,7 +953,7 @@ def execute_ai_trade(self, pair, ai_decision):
         self.print_color(f"LEVERAGE: {leverage}x ⚡", self.Fore.RED + self.Style.BRIGHT)
         self.print_color(f"ENTRY PRICE: ${entry_price:.4f}", self.Fore.WHITE)
         self.print_color(f"QUANTITY: {quantity}", self.Fore.CYAN)
-        self.print_color(f"🎯 NO TP/SL SET - AI WILL CLOSE MANUALLY BASED ON MARKET", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.print_color(f"🎯 3-LAYER ADAPTIVE EXIT SYSTEM ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
         self.print_color(f"CONFIDENCE: {confidence}%", self.Fore.YELLOW + self.Style.BRIGHT)
         self.print_color(f"REASONING: {reasoning}", self.Fore.WHITE)
         self.print_color("=" * 80, self.Fore.CYAN)
@@ -993,11 +993,12 @@ def execute_ai_trade(self, pair, ai_decision):
             'ai_confidence': confidence,
             'ai_reasoning': reasoning,
             'entry_time_th': self.get_thailand_time(),
-            'has_tp_sl': False  # NEW: Mark as no TP/SL
+            'has_tp_sl': False,  # NEW: Mark as no TP/SL
+            'peak_pnl': 0  # NEW: For 3-layer system
         }
         
-        self.print_color(f"✅ TRADE EXECUTED (NO TP/SL): {pair} {decision} | Leverage: {leverage}x", self.Fore.GREEN + self.Style.BRIGHT)
-        self.print_color(f"📊 AI will monitor and close manually based on market conditions", self.Fore.BLUE)
+        self.print_color(f"✅ TRADE EXECUTED (3-LAYER EXIT): {pair} {decision} | Leverage: {leverage}x", self.Fore.GREEN + self.Style.BRIGHT)
+        self.print_color(f"📊 AI will monitor with 3-Layer Adaptive Exit System", self.Fore.BLUE)
         return True
         
     except Exception as e:
@@ -1005,132 +1006,160 @@ def execute_ai_trade(self, pair, ai_decision):
         return False
 
 def get_ai_close_decision(self, pair, trade):
-    """Ask AI whether to close this position based on market conditions"""
+    """3-LAYER ADAPTIVE EXIT – FULL PROMPT + 100% SAFE"""
+    current_price = trade['entry_price']
+    current_pnl = 0.0
+
     try:
         current_price = self.get_current_price(pair)
-        market_data = self.get_price_history(pair)
         current_pnl = self.calculate_current_pnl(trade, current_price)
-        
-        prompt = f"""
-        SHOULD WE CLOSE THIS POSITION? (3MINUTE MONITORING)
-        
-        CURRENT ACTIVE TRADE:
-        - Pair: {pair}
-        - Direction: {trade['direction']}
-        - Entry Price: ${trade['entry_price']:.4f}
-        - Current Price: ${current_price:.4f}
-        - PnL: {current_pnl:.2f}%
-        - Position Size: ${trade['position_size_usd']:.2f}
-        - Leverage: {trade['leverage']}x
-        - Trade Age: {(time.time() - trade['entry_time']) / 60:.1f} minutes
-        
-        MARKET CONDITIONS:
-        - 1H Change: {market_data.get('price_change', 0):.2f}%
-        - Support: {market_data.get('support_levels', [])}
-        - Resistance: {market_data.get('resistance_levels', [])}
-        - Current Trend: {'BULLISH' if market_data.get('price_change', 0) > 0 else 'BEARISH'}
-        
-        Should we CLOSE this position now?
-        Consider:
-        - Profit/loss situation
-        - Trend changes and momentum
-        - Technical indicators
-        - Market sentiment
-        - Risk management
-        - Time in trade
-        
-        Return JSON:
-        {{
-            "should_close": true/false,
-            "close_reason": "TAKE_PROFIT" | "STOP_LOSS" | "TREND_REVERSAL" | "TIME_EXIT" | "MARKET_CONDITION",
-            "confidence": 0-100,
-            "reasoning": "Detailed technical analysis for close decision"
-        }}
-        """
-        
-        headers = {
-            "Authorization": f"Bearer {self.openrouter_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com",
-            "X-Title": "Fully Autonomous AI Trader"
-        }
-        
-        data = {
-            "model": "deepseek/deepseek-chat-v3.1",
-            "messages": [
-                {"role": "system", "content": "You are an AI trader monitoring active positions every 3 minute. Decide whether to close positions based on current market conditions, technical analysis, and risk management. Provide clear reasoning for your close decisions."},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.3,
-            "max_tokens": 600
-        }
-        
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=45)
-        
+    except:
+        pass
+
+    # Peak PnL
+    if 'peak_pnl' not in trade:
+        trade['peak_pnl'] = current_pnl
+    if current_pnl > trade['peak_pnl']:
+        trade['peak_pnl'] = current_pnl
+
+    # Hard -5% က ဘယ်လိုမှ မလွတ်ရ၊
+    if current_pnl <= -5.0:
+        return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Hard -5% rule", "confidence": 100}
+
+    # ATR(14) တွက်မယ်
+    atr_14 = 0.001
+    try:
+        market_data = self.get_price_history(pair)
+        atr_14 = market_data.get('mtf_analysis', {}).get('1h', {}).get('atr_14', 0)
+        if atr_14 == 0:
+            if self.binance:
+                klines = self.binance.futures_klines(symbol=pair, interval='1h', limit=50)
+                if len(klines) >= 15:
+                    highs = [float(k[2]) for k in klines]
+                    lows = [float(k[3]) for k in klines]
+                    closes = [float(k[4]) for k in klines]
+                    tr_list = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(klines))]
+                    atr_14 = sum(tr_list[-14:]) / 14
+    except:
+        pass
+
+    atr_pct = (atr_14 / trade['entry_price']) * 100
+    trail_pct = 2.0 * atr_pct
+
+    # 3-LAYER ADAPTIVE EXIT PROMPT
+    prompt = f"""
+=== 3-LAYER ADAPTIVE EXIT – NO FIXED TP/SL ===
+
+TRADE:
+- Pair: {pair}
+- Direction: {trade['direction']}
+- Entry: ${trade['entry_price']:.4f}
+- Current: ${current_price:.4f}
+- PnL: {current_pnl:+.2f}%
+- Peak Profit: {trade['peak_pnl']:+.2f}%
+- Leverage: {trade['leverage']}x
+- ATR(14): {atr_14:.5f} ({atr_pct:+.2f}%)
+- 2×ATR Trail: {trail_pct:+.2f}%
+
+RULES (MUST FOLLOW EXACTLY):
+1. If PnL ≥ +9.0% → close 60%, rest breakeven
+2. Trail at 2×ATR from swing
+3. Close full if momentum exhaustion (≥3/4 signals)
+4. If peak ≥ +8% and now ≤ +3% → close all
+5. Max loss -5.0% → immediate stop (already handled above)
+
+Decide NOW.
+
+Return ONLY this JSON (no markdown, no ```json, no extra text):
+
+{{
+    "should_close": true/false,
+    "close_type": "PARTIAL_60" | "FULL_TRAIL" | "STOP_LOSS" | "MOMENTUM_EXHAUSTION" | "WINNER_TURN_LOSER",
+    "close_reason": "short reason here",
+    "confidence": 90-100,
+    "reasoning": "1-2 sentences"
+}}
+"""
+
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self.openrouter_key}", "Content-Type": "application/json"},
+            json={
+                "model": "deepseek/deepseek-chat-v3.1",
+                "messages": [
+                    {"role": "system", "content": "You are a professional crypto futures trader. Return ONLY clean JSON exactly as requested. No markdown, no extra text."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.15,
+                "max_tokens": 500
+            },
+            timeout=35
+        )
+
         if response.status_code == 200:
-            result = response.json()
-            ai_response = result['choices'][0]['message']['content'].strip()
-            
-            # Parse AI response
-            json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group()
-                close_decision = json.loads(json_str)
-                return close_decision
-                
-        return {"should_close": False, "close_reason": "AI_UNAVAILABLE", "confidence": 0, "reasoning": "AI analysis failed"}
-        
+            text = response.json()['choices'][0]['message']['content']
+            import re, json
+            m = re.search(r'\{.*\}', text, re.DOTALL)
+            if m:
+                decision = json.loads(m.group())
+                return decision
+
+        self.print_color("3-Layer: AI က JSON မပြန်ဘူး → skip", self.Fore.YELLOW)
+
     except Exception as e:
-        self.print_color(f"AI close decision error: {e}", self.Fore.RED)
-        return {"should_close": False, "close_reason": "ERROR", "confidence": 0, "reasoning": f"Error: {e}"}
+        self.print_color(f"3-Layer error (safe): {e}", self.Fore.YELLOW)
+
+    # ဘာဖြစ်ဖြစ် ဒီကနေ အမြဲ ပြန်မယ်
+    return {"should_close": False, "close_reason": "No valid AI signal"}
 
 def monitor_positions(self):
-    """Monitor positions and ask AI when to close (NO TP/SL)"""
+    """Monitor positions and ask AI when to close (3-LAYER SYSTEM)"""
     try:
         closed_trades = []
         for pair, trade in list(self.ai_opened_trades.items()):
             if trade['status'] != 'ACTIVE':
                 continue
             
-            # NEW: Ask AI whether to close this position (for positions without TP/SL)
+            # NEW: Ask AI whether to close this position using 3-Layer system
             if not trade.get('has_tp_sl', True):
-                self.print_color(f"🔍 Asking AI whether to close {pair}...", self.Fore.BLUE)
+                self.print_color(f"🔍 3-Layer System Checking {pair}...", self.Fore.BLUE)
                 close_decision = self.get_ai_close_decision(pair, trade)
                 
                 if close_decision.get("should_close", False):
-                    close_reason = close_decision.get("close_reason", "AI_DECISION")
+                    close_type = close_decision.get("close_type", "AI_DECISION")
                     confidence = close_decision.get("confidence", 0)
                     reasoning = close_decision.get("reasoning", "No reason provided")
                     
-                    # 🆕 Use AI's ACTUAL reasoning for closing
-                    full_close_reason = f"AI_CLOSE: {close_reason} - {reasoning}"
+                    # 🆕 Use 3-Layer system's ACTUAL reasoning for closing
+                    full_close_reason = f"3-LAYER: {close_type} - {reasoning}"
                     
-                    self.print_color(f"🎯 AI Decision: CLOSE {pair}", self.Fore.YELLOW + self.Style.BRIGHT)
-                    self.print_color(f"📝 AI Reasoning: {reasoning}", self.Fore.WHITE)
-                    self.print_color(f"💡 Confidence: {confidence}% | Close Reason: {close_reason}", self.Fore.CYAN)
+                    self.print_color(f"🎯 3-Layer Decision: CLOSE {pair}", self.Fore.YELLOW + self.Style.BRIGHT)
+                    self.print_color(f"📝 Close Type: {close_type}", self.Fore.CYAN)
+                    self.print_color(f"💡 Confidence: {confidence}% | Reasoning: {reasoning}", self.Fore.WHITE)
                     
-                    # 🆕 Pass AI's actual reasoning to close function
+                    # 🆕 Pass 3-Layer system's actual reasoning to close function
                     success = self.close_trade_immediately(pair, trade, full_close_reason)
                     if success:
                         closed_trades.append(pair)
                 else:
-                    # Show AI's decision to hold with reasoning
+                    # Show 3-Layer system's decision to hold with reasoning
                     if close_decision.get('confidence', 0) > 0:
                         reasoning = close_decision.get('reasoning', 'No reason provided')
-                        self.print_color(f"🔍 AI wants to HOLD {pair} (Confidence: {close_decision.get('confidence', 0)}%)", self.Fore.GREEN)
+                        self.print_color(f"🔍 3-Layer wants to HOLD {pair} (Confidence: {close_decision.get('confidence', 0)}%)", self.Fore.GREEN)
                         self.print_color(f"📝 Hold Reasoning: {reasoning}", self.Fore.WHITE)
                 
         return closed_trades
                 
     except Exception as e:
-        self.print_color(f"Monitoring error: {e}", self.Fore.RED)
+        self.print_color(f"3-Layer Monitoring error: {e}", self.Fore.RED)
         return []
 
 def display_dashboard(self):
     """Display trading dashboard WITH learning progress"""
     self.print_color(f"\n🤖 AI TRADING DASHBOARD - {self.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
     self.print_color("=" * 90, self.Fore.CYAN)
-    self.print_color(f"🎯 MODE: NO TP/SL - AI MANUAL CLOSE ONLY", self.Fore.YELLOW + self.Style.BRIGHT)
+    self.print_color(f"🎯 MODE: 3-LAYER ADAPTIVE EXIT SYSTEM", self.Fore.YELLOW + self.Style.BRIGHT)
     self.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
     
     # === MTF SUMMARY ===
@@ -1172,7 +1201,7 @@ def display_dashboard(self):
             self.print_color(f"   Size: ${trade['position_size_usd']:.2f} | Leverage: {trade['leverage']}x ⚡", self.Fore.WHITE)
             self.print_color(f"   Entry: ${trade['entry_price']:.4f} | Current: ${current_price:.4f}", self.Fore.WHITE)
             self.print_color(f"   P&L: ${unrealized_pnl:.2f}", pnl_color)
-            self.print_color(f"   🎯 NO TP/SL - AI Monitoring Every 3min", self.Fore.YELLOW)
+            self.print_color(f"   🎯 3-LAYER ADAPTIVE EXIT ACTIVE", self.Fore.YELLOW)
             self.print_color("   " + "-" * 60, self.Fore.CYAN)
     
     if active_count == 0:
@@ -1251,9 +1280,9 @@ def show_advanced_learning_progress(self):
         self.print_color(f"\n🧠 Learning module not available", self.Fore.YELLOW)
 
 def run_trading_cycle(self):
-    """Run trading cycle with REVERSE position checking and AI manual close"""
+    """Run trading cycle with REVERSE position checking and 3-LAYER EXIT"""
     try:
-        # First monitor and ask AI to close positions
+        # First monitor and ask AI to close positions using 3-Layer system
         self.monitor_positions()
         self.display_dashboard()
         
@@ -1298,11 +1327,11 @@ def run_trading_cycle(self):
         self.print_color(f"Trading cycle error: {e}", self.Fore.RED)
 
 def start_trading(self):
-    """Start trading with REVERSE position feature and NO TP/SL"""
-    self.print_color("🚀 STARTING AI TRADER WITH 3MINUTE MONITORING!", self.Fore.CYAN + self.Style.BRIGHT)
+    """Start trading with REVERSE position feature and 3-LAYER EXIT"""
+    self.print_color("🚀 STARTING AI TRADER WITH 3-LAYER ADAPTIVE EXIT!", self.Fore.CYAN + self.Style.BRIGHT)
     self.print_color("💰 AI MANAGING $500 PORTFOLIO", self.Fore.GREEN + self.Style.BRIGHT)
     self.print_color("🔄 REVERSE POSITION: ENABLED (AI can flip losing positions)", self.Fore.MAGENTA + self.Style.BRIGHT)
-    self.print_color("🎯 NO TP/SL - AI MANUAL CLOSE ONLY", self.Fore.YELLOW + self.Style.BRIGHT)
+    self.print_color("🎯 3-LAYER ADAPTIVE EXIT SYSTEM: ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
     self.print_color("⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
     self.print_color("⚡ LEVERAGE: 5x to 10x", self.Fore.RED + self.Style.BRIGHT)
     if LEARN_SCRIPT_AVAILABLE:
@@ -1312,10 +1341,10 @@ def start_trading(self):
     while True:
         try:
             self.cycle_count += 1
-            self.print_color(f"\n🔄 TRADING CYCLE {self.cycle_count} (3MIN INTERVAL)", self.Fore.CYAN + self.Style.BRIGHT)
+            self.print_color(f"\n🔄 TRADING CYCLE {self.cycle_count} (3-LAYER SYSTEM)", self.Fore.CYAN + self.Style.BRIGHT)
             self.print_color("=" * 60, self.Fore.CYAN)
             self.run_trading_cycle()
-            self.print_color(f"⏳ Next analysis in 3 minute...", self.Fore.BLUE)
+            self.print_color(f"⏳ Next 3-Layer analysis in 3 minute...", self.Fore.BLUE)
             time.sleep(self.monitoring_interval)  # 3 minute
             
         except KeyboardInterrupt:
@@ -1373,7 +1402,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color("🤖 FULLY AUTONOMOUS PAPER TRADER INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color(f"💰 Virtual Budget: ${self.paper_balance}", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color(f"🔄 REVERSE POSITION FEATURE: ENABLED", self.Fore.MAGENTA + self.Style.BRIGHT)
-        self.real_bot.print_color(f"🎯 NO TP/SL - AI MANUAL CLOSE ONLY", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color(f"🎯 3-LAYER ADAPTIVE EXIT SYSTEM: ENABLED", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
     
     def load_paper_history(self):
@@ -1474,49 +1503,79 @@ class FullyAutonomous1HourPaperTrader:
             self.real_bot.print_color(f"❌ PAPER: Reverse position execution failed: {e}", self.Fore.RED)
             return False
 
-        def get_ai_close_decision(self, pair, trade):
-           """3-LAYER ADAPTIVE EXIT – အပြည့်အစုံ prompt ပါ၊ crash လုံးဝမဖြစ်တော့တဲ့ ဗားရှင်း"""
-        
-        # Default values (ဘာမှမရရင်တောင် အဆင်ပြေအောင်)
+    def paper_close_trade_immediately(self, pair, trade, close_reason="AI_DECISION"):
+        """Close paper trade immediately"""
+        try:
+            current_price = self.real_bot.get_current_price(pair)
+            if trade['direction'] == 'LONG':
+                pnl = (current_price - trade['entry_price']) * trade['quantity']
+            else:
+                pnl = (trade['entry_price'] - current_price) * trade['quantity']
+            
+            trade['status'] = 'CLOSED'
+            trade['exit_price'] = current_price
+            trade['pnl'] = pnl
+            trade['close_reason'] = close_reason
+            trade['close_time'] = self.real_bot.get_thailand_time()
+            
+            self.available_budget += trade['position_size_usd'] + pnl
+            self.add_paper_trade_to_history(trade.copy())
+            
+            pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
+            self.real_bot.print_color(f"✅ PAPER: Position closed | {pair} | P&L: ${pnl:.2f} | Reason: {close_reason}", pnl_color)
+            
+            # Remove from active positions after closing
+            if pair in self.paper_positions:
+                del self.paper_positions[pair]
+            
+            return True
+            
+        except Exception as e:
+            self.real_bot.print_color(f"❌ PAPER: Immediate close failed: {e}", self.Fore.RED)
+            return False
+
+    def get_ai_close_decision(self, pair, trade):
+        """3-LAYER ADAPTIVE EXIT – FULL PROMPT + 100% SAFE"""
         current_price = trade['entry_price']
         current_pnl = 0.0
-        
+
         try:
-            current_price = self.get_current_price(pair)
+            current_price = self.real_bot.get_current_price(pair)
             current_pnl = self.calculate_current_pnl(trade, current_price)
         except:
             pass
 
-        # Peak PnL update
+        # Peak PnL
         if 'peak_pnl' not in trade:
             trade['peak_pnl'] = current_pnl
         if current_pnl > trade['peak_pnl']:
             trade['peak_pnl'] = current_pnl
 
-        # Hard -5% ဆိုရင် ချက်ချင်း ပိတ်
+        # Hard -5% က ဘယ်လိုမှ မလွတ်ရ၊
         if current_pnl <= -5.0:
             return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Hard -5% rule", "confidence": 100}
 
         # ATR(14) တွက်မယ်
         atr_14 = 0.001
         try:
-            data = self.get_price_history(pair)
-            atr_14 = data.get('mtf_analysis', {}).get('1h', {}).get('atr_14', 0)
+            market_data = self.real_bot.get_price_history(pair)
+            atr_14 = market_data.get('mtf_analysis', {}).get('1h', {}).get('atr_14', 0)
             if atr_14 == 0:
-                klines = self.binance.futures_klines(symbol=pair, interval='1h', limit=50)
-                if len(klines) >= 15:
-                    h = [float(k[2]) for k in klines]
-                    l = [float(k[3]) for k in klines]
-                    c = [float(k[4]) for k in klines]
-                    tr = [max(h[i]-l[i], abs(h[i]-c[i-1]), abs(l[i]-c[i-1])) for i in range(1, len(klines))]
-                    atr_14 = sum(tr[-14:]) / 14
+                if self.real_bot.binance:
+                    klines = self.real_bot.binance.futures_klines(symbol=pair, interval='1h', limit=50)
+                    if len(klines) >= 15:
+                        highs = [float(k[2]) for k in klines]
+                        lows = [float(k[3]) for k in klines]
+                        closes = [float(k[4]) for k in klines]
+                        tr_list = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(klines))]
+                        atr_14 = sum(tr_list[-14:]) / 14
         except:
             pass
 
         atr_pct = (atr_14 / trade['entry_price']) * 100
         trail_pct = 2.0 * atr_pct
 
-        # မင်းလိုချင်တဲ့ အပြည့်အစုံ prompt ပါပြီ!!!
+        # 3-LAYER ADAPTIVE EXIT PROMPT
         prompt = f"""
 === 3-LAYER ADAPTIVE EXIT – NO FIXED TP/SL ===
 
@@ -1536,29 +1595,29 @@ RULES (MUST FOLLOW EXACTLY):
 2. Trail at 2×ATR from swing
 3. Close full if momentum exhaustion (≥3/4 signals)
 4. If peak ≥ +8% and now ≤ +3% → close all
-5. Max loss -5.0% → immediate stop (already handled)
+5. Max loss -5.0% → immediate stop (already handled above)
 
 Decide NOW.
 
-Return ONLY this exact JSON (NO MARKDOWN, NO ```, NO EXTRA TEXT):
+Return ONLY this JSON (no markdown, no ```json, no extra text):
 
 {{
-    "should_close": true,
-    "close_type": "PARTIAL_60",
-    "close_reason": "Hit +9% target",
-    "confidence": 95,
-    "reasoning": "PnL reached +9.3%, closing 60% per rule 1"
+    "should_close": true/false,
+    "close_type": "PARTIAL_60" | "FULL_TRAIL" | "STOP_LOSS" | "MOMENTUM_EXHAUSTION" | "WINNER_TURN_LOSER",
+    "close_reason": "short reason here",
+    "confidence": 90-100,
+    "reasoning": "1-2 sentences"
 }}
 """
 
         try:
             response = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {self.openrouter_key}", "Content-Type": "application/json"},
+                headers={"Authorization": f"Bearer {self.real_bot.openrouter_key}", "Content-Type": "application/json"},
                 json={
                     "model": "deepseek/deepseek-chat-v3.1",
                     "messages": [
-                        {"role": "system", "content": "You are a professional crypto futures trader. Return ONLY clean JSON. No markdown. No extra text. No explanation."},
+                        {"role": "system", "content": "You are a professional crypto futures trader. Return ONLY clean JSON exactly as requested. No markdown, no extra text."},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.15,
@@ -1575,8 +1634,10 @@ Return ONLY this exact JSON (NO MARKDOWN, NO ```, NO EXTRA TEXT):
                     decision = json.loads(m.group())
                     return decision
 
+            self.real_bot.print_color("3-Layer: AI က JSON မပြန်ဘူး → skip", self.Fore.YELLOW)
+
         except Exception as e:
-            self.real_bot.print_color(f"3-Layer AI error → safe skip: {e}", self.Fore.YELLOW)
+            self.real_bot.print_color(f"3-Layer error (safe): {e}", self.Fore.YELLOW)
 
         # ဘာဖြစ်ဖြစ် ဒီကနေ အမြဲ ပြန်မယ်
         return {"should_close": False, "close_reason": "No valid AI signal"}
@@ -1626,14 +1687,14 @@ Return ONLY this exact JSON (NO MARKDOWN, NO ```, NO EXTRA TEXT):
             direction_color = self.Fore.GREEN + self.Style.BRIGHT if decision == 'LONG' else self.Fore.RED + self.Style.BRIGHT
             direction_icon = "🟢 LONG" if decision == 'LONG' else "🔴 SHORT"
             
-            self.real_bot.print_color(f"\n🤖 PAPER TRADE EXECUTION (NO TP/SL)", self.Fore.CYAN + self.Style.BRIGHT)
+            self.real_bot.print_color(f"\n🤖 PAPER TRADE EXECUTION (3-LAYER EXIT)", self.Fore.CYAN + self.Style.BRIGHT)
             self.real_bot.print_color("=" * 80, self.Fore.CYAN)
             self.real_bot.print_color(f"{direction_icon} {pair}", direction_color)
             self.real_bot.print_color(f"POSITION SIZE: ${position_size_usd:.2f}", self.Fore.GREEN + self.Style.BRIGHT)
             self.real_bot.print_color(f"LEVERAGE: {leverage}x ⚡", self.Fore.RED + self.Style.BRIGHT)
             self.real_bot.print_color(f"ENTRY PRICE: ${entry_price:.4f}", self.Fore.WHITE)
             self.real_bot.print_color(f"QUANTITY: {quantity}", self.Fore.CYAN)
-            self.real_bot.print_color(f"🎯 NO TP/SL SET - AI WILL CLOSE MANUALLY", self.Fore.YELLOW + self.Style.BRIGHT)
+            self.real_bot.print_color(f"🎯 3-LAYER ADAPTIVE EXIT SYSTEM ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
             self.real_bot.print_color(f"CONFIDENCE: {confidence}%", self.Fore.YELLOW + self.Style.BRIGHT)
             self.real_bot.print_color(f"REASONING: {reasoning}", self.Fore.WHITE)
             self.real_bot.print_color("=" * 80, self.Fore.CYAN)
@@ -1653,10 +1714,11 @@ Return ONLY this exact JSON (NO MARKDOWN, NO ```, NO EXTRA TEXT):
                 'ai_confidence': confidence,
                 'ai_reasoning': reasoning,
                 'entry_time_th': self.real_bot.get_thailand_time(),
-                'has_tp_sl': False  # Mark as no TP/SL
+                'has_tp_sl': False,  # Mark as no TP/SL
+                'peak_pnl': 0  # NEW: For 3-layer system
             }
             
-            self.real_bot.print_color(f"✅ PAPER TRADE EXECUTED (NO TP/SL): {pair} {decision} | Leverage: {leverage}x", self.Fore.GREEN + self.Style.BRIGHT)
+            self.real_bot.print_color(f"✅ PAPER TRADE EXECUTED (3-LAYER EXIT): {pair} {decision} | Leverage: {leverage}x", self.Fore.GREEN + self.Style.BRIGHT)
             return True
             
         except Exception as e:
@@ -1664,52 +1726,52 @@ Return ONLY this exact JSON (NO MARKDOWN, NO ```, NO EXTRA TEXT):
             return False
 
     def monitor_paper_positions(self):
-        """Monitor paper positions and ask AI when to close"""
+        """Monitor paper positions and ask AI when to close (3-LAYER SYSTEM)"""
         try:
             closed_positions = []
             for pair, trade in list(self.paper_positions.items()):
                 if trade['status'] != 'ACTIVE':
                     continue
                 
-                # Ask AI whether to close this paper position
+                # Ask AI whether to close this paper position using 3-Layer system
                 if not trade.get('has_tp_sl', True):
-                    self.real_bot.print_color(f"🔍 PAPER: Asking AI whether to close {pair}...", self.Fore.BLUE)
+                    self.real_bot.print_color(f"🔍 PAPER 3-Layer System Checking {pair}...", self.Fore.BLUE)
                     close_decision = self.get_ai_close_decision(pair, trade)
                     
                     if close_decision.get("should_close", False):
-                        close_reason = close_decision.get("close_reason", "AI_DECISION")
+                        close_type = close_decision.get("close_type", "AI_DECISION")
                         confidence = close_decision.get("confidence", 0)
                         reasoning = close_decision.get("reasoning", "No reason provided")
                         
-                        # 🆕 Use AI's ACTUAL reasoning for closing
-                        full_close_reason = f"AI_CLOSE: {close_reason} - {reasoning}"
+                        # 🆕 Use 3-Layer system's ACTUAL reasoning for closing
+                        full_close_reason = f"3-LAYER: {close_type} - {reasoning}"
                         
-                        self.real_bot.print_color(f"🎯 PAPER AI Decision: CLOSE {pair}", self.Fore.YELLOW + self.Style.BRIGHT)
-                        self.real_bot.print_color(f"📝 AI Reasoning: {reasoning}", self.Fore.WHITE)
-                        self.real_bot.print_color(f"💡 Confidence: {confidence}% | Close Reason: {close_reason}", self.Fore.CYAN)
+                        self.real_bot.print_color(f"🎯 PAPER 3-Layer Decision: CLOSE {pair}", self.Fore.YELLOW + self.Style.BRIGHT)
+                        self.real_bot.print_color(f"📝 Close Type: {close_type}", self.Fore.CYAN)
+                        self.real_bot.print_color(f"💡 Confidence: {confidence}% | Reasoning: {reasoning}", self.Fore.WHITE)
                         
-                        # 🆕 Pass AI's actual reasoning to close function
+                        # 🆕 Pass 3-Layer system's actual reasoning to close function
                         success = self.paper_close_trade_immediately(pair, trade, full_close_reason)
                         if success:
                             closed_positions.append(pair)
                     else:
-                        # Show AI's decision to hold with reasoning
+                        # Show 3-Layer system's decision to hold with reasoning
                         if close_decision.get('confidence', 0) > 0:
                             reasoning = close_decision.get('reasoning', 'No reason provided')
-                            self.real_bot.print_color(f"🔍 PAPER AI wants to HOLD {pair} (Confidence: {close_decision.get('confidence', 0)}%)", self.Fore.GREEN)
+                            self.real_bot.print_color(f"🔍 PAPER 3-Layer wants to HOLD {pair} (Confidence: {close_decision.get('confidence', 0)}%)", self.Fore.GREEN)
                             self.real_bot.print_color(f"📝 Hold Reasoning: {reasoning}", self.Fore.WHITE)
                     
             return closed_positions
                     
         except Exception as e:
-            self.real_bot.print_color(f"PAPER: Monitoring error: {e}", self.Fore.RED)
+            self.real_bot.print_color(f"PAPER: 3-Layer Monitoring error: {e}", self.Fore.RED)
             return []
 
     def display_paper_dashboard(self):
         """Display paper trading dashboard"""
         self.real_bot.print_color(f"\n🤖 PAPER TRADING DASHBOARD - {self.real_bot.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color("=" * 90, self.Fore.CYAN)
-        self.real_bot.print_color(f"🎯 MODE: NO TP/SL - AI MANUAL CLOSE ONLY", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color(f"🎯 MODE: 3-LAYER ADAPTIVE EXIT SYSTEM", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
         
         active_count = 0
@@ -1734,7 +1796,7 @@ Return ONLY this exact JSON (NO MARKDOWN, NO ```, NO EXTRA TEXT):
                 self.real_bot.print_color(f"   Size: ${trade['position_size_usd']:.2f} | Leverage: {trade['leverage']}x ⚡", self.Fore.WHITE)
                 self.real_bot.print_color(f"   Entry: ${trade['entry_price']:.4f} | Current: ${current_price:.4f}", self.Fore.WHITE)
                 self.real_bot.print_color(f"   P&L: ${unrealized_pnl:.2f}", pnl_color)
-                self.real_bot.print_color(f"   🎯 NO TP/SL - AI Monitoring Every 3min", self.Fore.YELLOW)
+                self.real_bot.print_color(f"   🎯 3-LAYER ADAPTIVE EXIT ACTIVE", self.Fore.YELLOW)
                 self.real_bot.print_color("   " + "-" * 60, self.Fore.CYAN)
         
         if active_count == 0:
@@ -1790,21 +1852,21 @@ Return ONLY this exact JSON (NO MARKDOWN, NO ```, NO EXTRA TEXT):
     def run_paper_trading_cycle(self):
         """Run paper trading cycle"""
         try:
-            # First monitor and ask AI to close paper positions
+            # First monitor and ask AI to close paper positions using 3-Layer system
             self.monitor_paper_positions()
             self.display_paper_dashboard()
-            
-            # === FIXED: Use paper_cycle_count and check method exists ===
-            if hasattr(self, 'paper_cycle_count') and self.paper_cycle_count % 3 == 0 and LEARN_SCRIPT_AVAILABLE:
-                if hasattr(self.real_bot, 'show_advanced_learning_progress'):
-                    self.real_bot.show_advanced_learning_progress()
-                else:
-                    self.real_bot.print_color(f"\n🧠 Learning progress display not available", self.Fore.YELLOW)
             
             # Show stats periodically
             if hasattr(self, 'paper_cycle_count') and self.paper_cycle_count % 4 == 0:
                 self.show_paper_history(8)
                 self.show_paper_stats()
+            
+            # Show learning progress
+            if hasattr(self, 'paper_cycle_count') and self.paper_cycle_count % 3 == 0 and LEARN_SCRIPT_AVAILABLE:
+                if hasattr(self.real_bot, 'show_advanced_learning_progress'):
+                    self.real_bot.show_advanced_learning_progress()
+                else:
+                    self.real_bot.print_color(f"\n🧠 Learning progress display not available", self.Fore.YELLOW)
             
             self.real_bot.print_color(f"\nPAPER: DEEPSEEK SCANNING {len(self.available_pairs)} PAIRS...", self.Fore.BLUE + self.Style.BRIGHT)
             
@@ -1838,20 +1900,20 @@ Return ONLY this exact JSON (NO MARKDOWN, NO ```, NO EXTRA TEXT):
 
     def start_paper_trading(self):
         """Start paper trading"""
-        self.real_bot.print_color("🚀 STARTING PAPER TRADING WITH 3MINUTE MONITORING!", self.Fore.CYAN + self.Style.BRIGHT)
+        self.real_bot.print_color("🚀 STARTING PAPER TRADING WITH 3-LAYER ADAPTIVE EXIT!", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color("💰 VIRTUAL $500 PORTFOLIO", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color("🔄 REVERSE POSITION: ENABLED", self.Fore.MAGENTA + self.Style.BRIGHT)
-        self.real_bot.print_color("🎯 NO TP/SL - AI MANUAL CLOSE ONLY", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color("🎯 3-LAYER ADAPTIVE EXIT SYSTEM: ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color("⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
         
         self.paper_cycle_count = 0
         while True:
             try:
                 self.paper_cycle_count += 1
-                self.real_bot.print_color(f"\n🔄 PAPER TRADING CYCLE {self.paper_cycle_count} (3MIN INTERVAL)", self.Fore.CYAN + self.Style.BRIGHT)
+                self.real_bot.print_color(f"\n🔄 PAPER TRADING CYCLE {self.paper_cycle_count} (3-LAYER SYSTEM)", self.Fore.CYAN + self.Style.BRIGHT)
                 self.real_bot.print_color("=" * 60, self.Fore.CYAN)
                 self.run_paper_trading_cycle()
-                self.real_bot.print_color(f"⏳ Next paper analysis in 3 minute...", self.Fore.BLUE)
+                self.real_bot.print_color(f"⏳ Next 3-Layer analysis in 3 minute...", self.Fore.BLUE)
                 time.sleep(self.monitoring_interval)
                 
             except KeyboardInterrupt:
@@ -1881,7 +1943,7 @@ if __name__ == "__main__":
         
         if choice == "1":
             if bot.binance:
-                print(f"\n🚀 STARTING REAL TRADING...")
+                print(f"\n🚀 STARTING REAL TRADING WITH 3-LAYER SYSTEM...")
                 bot.start_trading()
             else:
                 print(f"\n❌ Binance connection failed. Switching to paper trading...")
@@ -1889,7 +1951,7 @@ if __name__ == "__main__":
                 paper_bot.start_paper_trading()
                 
         elif choice == "2":
-            print(f"\n📝 STARTING PAPER TRADING...")
+            print(f"\n📝 STARTING PAPER TRADING WITH 3-LAYER SYSTEM...")
             paper_bot = FullyAutonomous1HourPaperTrader(bot)
             paper_bot.start_paper_trading()
             
