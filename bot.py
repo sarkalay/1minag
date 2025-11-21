@@ -1474,47 +1474,49 @@ class FullyAutonomous1HourPaperTrader:
             self.real_bot.print_color(f"❌ PAPER: Reverse position execution failed: {e}", self.Fore.RED)
             return False
 
-        def get_ai_close_decision(self, pair, trade):
-        """3-LAYER ADAPTIVE EXIT – FULL PROMPT + 100% SAFE (ဒီတစ်ခါ တကယ် နောက်ဆုံး)"""
+            def get_ai_close_decision(self, pair, trade):
+        """3-LAYER ADAPTIVE EXIT – အပြည့်အစုံ prompt ပါ၊ crash လုံးဝမဖြစ်တော့တဲ့ ဗားရှင်း"""
+        
+        # Default values (ဘာမှမရရင်တောင် အဆင်ပြေအောင်)
         current_price = trade['entry_price']
         current_pnl = 0.0
-
+        
         try:
             current_price = self.get_current_price(pair)
             current_pnl = self.calculate_current_pnl(trade, current_price)
         except:
             pass
 
-        # Peak PnL
+        # Peak PnL update
         if 'peak_pnl' not in trade:
             trade['peak_pnl'] = current_pnl
         if current_pnl > trade['peak_pnl']:
             trade['peak_pnl'] = current_pnl
 
-        # Hard -5% က ဘယ်လိုမှ မလွတ်ရ၊
+        # Hard -5% ဆိုရင် ချက်ချင်း ပိတ်
         if current_pnl <= -5.0:
             return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Hard -5% rule", "confidence": 100}
 
         # ATR(14) တွက်မယ်
         atr_14 = 0.001
         try:
-            market_data = self.get_price_history(pair)
-            atr_14 = market_data.get('mtf_analysis', {}).get('1h', {}).get('atr_14', 0)
+            data = self.get_price_history(pair)
+            atr_14 = data.get('mtf_analysis', {}).get('1h', {}).get('atr_14', 0)
             if atr_14 == 0:
                 klines = self.binance.futures_klines(symbol=pair, interval='1h', limit=50)
                 if len(klines) >= 15:
-                    highs = [float(k[2]) for k in klines]
-                    lows = [float(k[3]) for k in klines]
-                    closes = [float(k[4]) for k in klines]
-                    tr_list = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(klines))]
-                    atr_14 = sum(tr_list[-14:]) / 14
+                    h = [float(k[2]) for k in klines]
+                    l = [float(k[3]) for k in klines]
+                    c = [float(k[4]) for k in klines]
+                    tr = [max(h[i]-l[i], abs(h[i]-c[i-1]), abs(l[i]-c[i-1])) for i in range(1, len(klines))]
+                    atr_14 = sum(tr[-14:]) / 14
         except:
             pass
 
         atr_pct = (atr_14 / trade['entry_price']) * 100
         trail_pct = 2.0 * atr_pct
 
-        # အခု မင်းလိုချင်တဲ့ အပြည့်အစုံ prompt ပါပြီ!!!
+        # မင်းလိုချင်တဲ့ အပြည့်အစုံ prompt ပါပြီ!!!
         prompt = f"""
 === 3-LAYER ADAPTIVE EXIT – NO FIXED TP/SL ===
 
@@ -1534,18 +1536,18 @@ RULES (MUST FOLLOW EXACTLY):
 2. Trail at 2×ATR from swing
 3. Close full if momentum exhaustion (≥3/4 signals)
 4. If peak ≥ +8% and now ≤ +3% → close all
-5. Max loss -5.0% → immediate stop (already handled above)
+5. Max loss -5.0% → immediate stop (already handled)
 
 Decide NOW.
 
-Return ONLY this JSON (no markdown, no ```json, no extra text):
+Return ONLY this exact JSON (NO MARKDOWN, NO ```, NO EXTRA TEXT):
 
 {{
-    "should_close": true/false,
-    "close_type": "PARTIAL_60" | "FULL_TRAIL" | "STOP_LOSS" | "MOMENTUM_EXHAUSTION" | "WINNER_TURN_LOSER",
-    "close_reason": "short reason here",
-    "confidence": 90-100,
-    "reasoning": "1-2 sentences"
+    "should_close": true,
+    "close_type": "PARTIAL_60",
+    "close_reason": "Hit +9% target",
+    "confidence": 95,
+    "reasoning": "PnL reached +9.3%, closing 60% per rule 1"
 }}
 """
 
@@ -1556,7 +1558,7 @@ Return ONLY this JSON (no markdown, no ```json, no extra text):
                 json={
                     "model": "deepseek/deepseek-chat-v3.1",
                     "messages": [
-                        {"role": "system", "content": "You are a professional crypto futures trader. Return ONLY clean JSON exactly as requested. No markdown, no extra text."},
+                        {"role": "system", "content": "You are a professional crypto futures trader. Return ONLY clean JSON. No markdown. No extra text. No explanation."},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.15,
@@ -1573,10 +1575,8 @@ Return ONLY this JSON (no markdown, no ```json, no extra text):
                     decision = json.loads(m.group())
                     return decision
 
-            self.real_bot.print_color("3-Layer: AI က JSON မပြန်ဘူး → skip", self.Fore.YELLOW)
-
         except Exception as e:
-            self.real_bot.print_color(f"3-Layer error (safe): {e}", self.Fore.YELLOW)
+            self.real_bot.print_color(f"3-Layer AI error → safe skip: {e}", self.Fore.YELLOW)
 
         # ဘာဖြစ်ဖြစ် ဒီကနေ အမြဲ ပြန်မယ်
         return {"should_close": False, "close_reason": "No valid AI signal"}
