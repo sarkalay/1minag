@@ -1474,80 +1474,48 @@ class FullyAutonomous1HourPaperTrader:
             self.real_bot.print_color(f"❌ PAPER: Reverse position execution failed: {e}", self.Fore.RED)
             return False
 
-    def paper_close_trade_immediately(self, pair, trade, close_reason="AI_DECISION"):
-        """Close paper trade immediately with AI's actual reasoning"""
-        try:
-            current_price = self.real_bot.get_current_price(pair)
-            if trade['direction'] == 'LONG':
-                pnl = (current_price - trade['entry_price']) * trade['quantity']
-            else:
-                pnl = (trade['entry_price'] - current_price) * trade['quantity']
-            
-            trade['status'] = 'CLOSED'
-            trade['exit_price'] = current_price
-            trade['pnl'] = pnl
-            trade['close_reason'] = close_reason  # 🆕 Use AI's actual reason
-            trade['close_time'] = self.real_bot.get_thailand_time()
-            
-            self.available_budget += trade['position_size_usd'] + pnl
-            self.paper_balance = self.available_budget
-            
-            self.add_paper_trade_to_history(trade.copy())
-            
-            # 🆕 Better closing message with AI reasoning
-            pnl_color = self.Fore.GREEN if pnl > 0 else self.Fore.RED
-            self.real_bot.print_color(f"✅ PAPER: Position closed | {pair} | P&L: ${pnl:.2f} | Reason: {close_reason}", pnl_color)
-            
-            # Remove from active positions after closing
-            if pair in self.paper_positions:
-                del self.paper_positions[pair]
-            
-            return True
-                
-        except Exception as e:
-            self.real_bot.print_color(f"❌ PAPER: Immediate close failed: {e}", self.Fore.RED)
-            return False
+        def get_ai_close_decision(self, pair, trade):
+        """3-LAYER ADAPTIVE EXIT – FULL PROMPT + 100% SAFE (ဒီတစ်ခါ တကယ် နောက်ဆုံး)"""
+        current_price = trade['entry_price']
+        current_pnl = 0.0
 
-    def get_ai_close_decision(self, pair, trade):
-        """3-LAYER ADAPTIVE EXIT SYSTEM – 100% SAFE & WORKING (Paper Trading)"""
         try:
             current_price = self.get_current_price(pair)
             current_pnl = self.calculate_current_pnl(trade, current_price)
-
         except:
-            current_price = trade['entry_price']
-            current_pnl = 0.0
+            pass
 
-            # Peak PnL update
-            if 'peak_pnl' not in trade:
-                trade['peak_pnl'] = current_pnl
-            if current_pnl > trade['peak_pnl']:
-                trade['peak_pnl'] = current_pnl
+        # Peak PnL
+        if 'peak_pnl' not in trade:
+            trade['peak_pnl'] = current_pnl
+        if current_pnl > trade['peak_pnl']:
+            trade['peak_pnl'] = current_pnl
 
-            # ATR(14) တွက်တာ
-            try:
-                market_data = self.get_price_history(pair)
-                mtf = market_data.get('mtf_analysis', {})
-                atr_14 = mtf.get('1h', {}).get('atr_14', 0)
-                if atr_14 == 0:
-                    klines = self.binance.futures_klines(symbol=pair, interval='1h', limit=50)
-                    closes = [float(k[4]) for k in klines]
+        # Hard -5% က ဘယ်လိုမှ မလွတ်ရ၊
+        if current_pnl <= -5.0:
+            return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Hard -5% rule", "confidence": 100}
+
+        # ATR(14) တွက်မယ်
+        atr_14 = 0.001
+        try:
+            market_data = self.get_price_history(pair)
+            atr_14 = market_data.get('mtf_analysis', {}).get('1h', {}).get('atr_14', 0)
+            if atr_14 == 0:
+                klines = self.binance.futures_klines(symbol=pair, interval='1h', limit=50)
+                if len(klines) >= 15:
                     highs = [float(k[2]) for k in klines]
                     lows = [float(k[3]) for k in klines]
-                    tr_list = []
-                    for i in range(1, len(closes)):
-                        tr = max(highs[i] - lows[i],
-                                 abs(highs[i] - closes[i-1]),
-                                 abs(lows[i] - closes[i-1]))
-                        tr_list.append(tr)
-                    atr_14 = sum(tr_list[-14:]) / 14 if len(tr_list) >= 14 else 0.001
-            except:
-                atr_14 = 0.001
+                    closes = [float(k[4]) for k in klines]
+                    tr_list = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(klines))]
+                    atr_14 = sum(tr_list[-14:]) / 14
+        except:
+            pass
 
-            atr_pct = (atr_14 / trade['entry_price']) * 100
-            trail_pct = 2.0 * atr_pct
+        atr_pct = (atr_14 / trade['entry_price']) * 100
+        trail_pct = 2.0 * atr_pct
 
-            prompt = f"""
+        # အခု မင်းလိုချင်တဲ့ အပြည့်အစုံ prompt ပါပြီ!!!
+        prompt = f"""
 === 3-LAYER ADAPTIVE EXIT – NO FIXED TP/SL ===
 
 TRADE:
@@ -1561,58 +1529,57 @@ TRADE:
 - ATR(14): {atr_14:.5f} ({atr_pct:+.2f}%)
 - 2×ATR Trail: {trail_pct:+.2f}%
 
-RULES:
-1. PnL ≥ +9.0% → close 60%
-2. Trail at 2×ATR
-3. Momentum exhaustion → close all
-4. Peak ≥ +8% → now ≤ +3% → close all
-5. Max loss -5.0% → immediate stop
+RULES (MUST FOLLOW EXACTLY):
+1. If PnL ≥ +9.0% → close 60%, rest breakeven
+2. Trail at 2×ATR from swing
+3. Close full if momentum exhaustion (≥3/4 signals)
+4. If peak ≥ +8% and now ≤ +3% → close all
+5. Max loss -5.0% → immediate stop (already handled above)
 
-Return ONLY JSON:
+Decide NOW.
+
+Return ONLY this JSON (no markdown, no ```json, no extra text):
+
 {{
     "should_close": true/false,
     "close_type": "PARTIAL_60" | "FULL_TRAIL" | "STOP_LOSS" | "MOMENTUM_EXHAUSTION" | "WINNER_TURN_LOSER",
-    "close_reason": "short reason",
-    "confidence": 90-100
+    "close_reason": "short reason here",
+    "confidence": 90-100,
+    "reasoning": "1-2 sentences"
 }}
 """
 
-            headers = {"Authorization": f"Bearer {self.openrouter_key}", "Content-Type": "application/json"}
-            data = {
-                "model": "deepseek/deepseek-chat-v3.1",
-                "messages": [
-                    {"role": "system", "content": "You are a pro crypto trader. Follow 3-layer adaptive exit exactly."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.15,
-                "max_tokens": 600
-            }
+        try:
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self.openrouter_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "deepseek/deepseek-chat-v3.1",
+                    "messages": [
+                        {"role": "system", "content": "You are a professional crypto futures trader. Return ONLY clean JSON exactly as requested. No markdown, no extra text."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.15,
+                    "max_tokens": 500
+                },
+                timeout=35
+            )
 
-            try:
-                response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=40)
-                
-                if response.status_code == 200:
-                    text = response.json()['choices'][0]['message']['content']
-                    import re, json
-                    m = re.search(r'\{.*\}', text, re.DOTALL)
-                    if m:
-                        decision = json.loads(m.group())
-                        if current_pnl <= -5.0:
-                            decision = {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Hard -5%", "confidence": 100}
-                        return decision
-                    else:
-                        self.real_bot.print_color("3-Layer: No JSON → safe fallback", self.Fore.YELLOW)
-            except Exception as e:
-                self.real_bot.print_color(f"3-Layer API/parse error → safe ({e})", self.Fore.YELLOW)
+            if response.status_code == 200:
+                text = response.json()['choices'][0]['message']['content']
+                import re, json
+                m = re.search(r'\{.*\}', text, re.DOTALL)
+                if m:
+                    decision = json.loads(m.group())
+                    return decision
 
-            # ဘာဖြစ်ဖြစ် ဒီနေရာ အမြဲရောက်ရမယ်
-            if current_pnl <= -5.0:
-                return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Safety -5%", "confidence": 100}
-            return {"should_close": False, "close_reason": "NO_SIGNAL_OR_ERROR"}
+            self.real_bot.print_color("3-Layer: AI က JSON မပြန်ဘူး → skip", self.Fore.YELLOW)
 
         except Exception as e:
-            self.real_bot.print_color(f"3-Layer CRITICAL error → still safe: {e}", self.Fore.RED)
-            return {"should_close": current_pnl <= -5.0, "close_reason": "CRITICAL_SAFETY"}
+            self.real_bot.print_color(f"3-Layer error (safe): {e}", self.Fore.YELLOW)
+
+        # ဘာဖြစ်ဖြစ် ဒီကနေ အမြဲ ပြန်မယ်
+        return {"should_close": False, "close_reason": "No valid AI signal"}
 
     def paper_execute_trade(self, pair, ai_decision):
         """Execute paper trade WITHOUT TP/SL orders"""
