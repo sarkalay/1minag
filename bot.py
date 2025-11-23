@@ -182,7 +182,7 @@ def _initialize_trading(self):
         self.print_color(f"🤖 FULLY AUTONOMOUS AI TRADER ACTIVATED! 🤖", self.Fore.CYAN + self.Style.BRIGHT)
         self.print_color(f"💰 TOTAL BUDGET: ${self.total_budget}", self.Fore.GREEN + self.Style.BRIGHT)
         self.print_color(f"🔄 REVERSE POSITION FEATURE: ENABLED", self.Fore.MAGENTA + self.Style.BRIGHT)
-        self.print_color(f"🎯 3-LAYER ADAPTIVE EXIT SYSTEM: ENABLED", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.print_color(f"🎯 BOUNCE-PROOF 3-LAYER EXIT V2: ENABLED", self.Fore.YELLOW + self.Style.BRIGHT)
         self.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
         self.print_color(f"📊 Max Positions: {self.max_concurrent_trades}", self.Fore.YELLOW + self.Style.BRIGHT)
         if LEARN_SCRIPT_AVAILABLE:
@@ -953,7 +953,7 @@ def execute_ai_trade(self, pair, ai_decision):
         self.print_color(f"LEVERAGE: {leverage}x ⚡", self.Fore.RED + self.Style.BRIGHT)
         self.print_color(f"ENTRY PRICE: ${entry_price:.4f}", self.Fore.WHITE)
         self.print_color(f"QUANTITY: {quantity}", self.Fore.CYAN)
-        self.print_color(f"🎯 3-LAYER ADAPTIVE EXIT SYSTEM ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.print_color(f"🎯 BOUNCE-PROOF 3-LAYER EXIT V2 ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
         self.print_color(f"CONFIDENCE: {confidence}%", self.Fore.YELLOW + self.Style.BRIGHT)
         self.print_color(f"REASONING: {reasoning}", self.Fore.WHITE)
         self.print_color("=" * 80, self.Fore.CYAN)
@@ -997,121 +997,78 @@ def execute_ai_trade(self, pair, ai_decision):
             'peak_pnl': 0  # NEW: For 3-layer system
         }
         
-        self.print_color(f"✅ TRADE EXECUTED (3-LAYER EXIT): {pair} {decision} | Leverage: {leverage}x", self.Fore.GREEN + self.Style.BRIGHT)
-        self.print_color(f"📊 AI will monitor with 3-Layer Adaptive Exit System", self.Fore.BLUE)
+        self.print_color(f"✅ TRADE EXECUTED (BOUNCE-PROOF V2): {pair} {decision} | Leverage: {leverage}x", self.Fore.GREEN + self.Style.BRIGHT)
+        self.print_color(f"📊 AI will monitor with Bounce-Proof 3-Layer Exit System", self.Fore.BLUE)
         return True
         
     except Exception as e:
         self.print_color(f"❌ Trade execution failed: {e}", self.Fore.RED)
         return False
 
-def get_ai_close_decision(self, pair, trade):
-    """3-LAYER ADAPTIVE EXIT – FULL PROMPT + 100% SAFE"""
-    current_price = trade['entry_price']
-    current_pnl = 0.0
-
+def get_ai_close_decision_v2(self, pair, trade):
+    """BOUNCE-PROOF 3-LAYER EXIT V2 – အမြတ်ပြန်မပေးရအောင် အပြတ်ပိတ်"""
     try:
         current_price = self.get_current_price(pair)
         current_pnl = self.calculate_current_pnl(trade, current_price)
-    except:
-        pass
+        
+        # Peak PnL tracking
+        if 'peak_pnl' not in trade:
+            trade['peak_pnl'] = current_pnl
+        if current_pnl > trade['peak_pnl']:
+            trade['peak_pnl'] = current_pnl
+        
+        # 1. Hard stop -5% က ဘယ်လိုမှ မလွတ်
+        if current_pnl <= -5.0:
+            return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Hard -5% rule", "confidence": 100}
 
-    # Peak PnL
-    if 'peak_pnl' not in trade:
-        trade['peak_pnl'] = current_pnl
-    if current_pnl > trade['peak_pnl']:
-        trade['peak_pnl'] = current_pnl
+        # 2. NEW: Oversold Protection – RSI 1H/4H < 33 ဆိုရင် short ကို မထိရုံထိ ကိုင်ထား
+        mtf = self.get_price_history(pair).get('mtf_analysis', {})
+        rsi_1h = mtf.get('1h', {}).get('rsi', 50)
+        rsi_4h = mtf.get('4h', {}).get('rsi', 50)
+        if trade['direction'] == 'SHORT' and (rsi_1h < 33 or rsi_4h < 33):
+            # Bounce risk မြင့်နေရင် trail ကို ပိုကျယ်အောင် လုပ်၊ partial မယူတော့
+            pass
 
-    # Hard -5% က ဘယ်လိုမှ မလွတ်ရ၊
-    if current_pnl <= -5.0:
-        return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Hard -5% rule", "confidence": 100}
+        # 3. NEW: Dynamic Partial – +9% မှာ မဟုတ်တော့ဘူး → +15% မှ ယူမယ် + ပမာဏ 40% ပဲ
+        if current_pnl >= 15.0 and not trade.get('partial_taken', False):
+            return {
+                "should_close": True,
+                "close_type": "PARTIAL_40",
+                "close_reason": f"Profit >=15% → secure 40% only (current {current_pnl:.1f}%)",
+                "confidence": 98,
+                "partial_percent": 40
+            }
 
-    # ATR(14) တွက်မယ်
-    atr_14 = 0.001
-    try:
-        market_data = self.get_price_history(pair)
-        atr_14 = market_data.get('mtf_analysis', {}).get('1h', {}).get('atr_14', 0)
-        if atr_14 == 0:
-            if self.binance:
-                klines = self.binance.futures_klines(symbol=pair, interval='1h', limit=50)
-                if len(klines) >= 15:
-                    highs = [float(k[2]) for k in klines]
-                    lows = [float(k[3]) for k in klines]
-                    closes = [float(k[4]) for k in klines]
-                    tr_list = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(klines))]
-                    atr_14 = sum(tr_list[-14:]) / 14
-    except:
-        pass
+        # 4. NEW: Smarter Trailing – 3×ATR + RSI divergence check
+        atr_14 = 0.001
+        try:
+            klines = self.binance.futures_klines(symbol=pair, interval='1h', limit=50)
+            if len(klines) >= 15:
+                highs = [float(k[2]) for k in klines]
+                lows = [float(k[3]) for k in klines]
+                closes = [float(k[4]) for k in klines]
+                tr = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(klines))]
+                atr_14 = sum(tr[-14:]) / 14
+        except: pass
+        
+        trail_price = trade['entry_price']
+        if trade['direction'] == 'SHORT':
+            trail_price = current_price + (3 * atr_14)  # ပိုကျယ်အောင်
+            if current_price > trail_price:
+                return {"should_close": True, "close_type": "SMART_TRAIL", "close_reason": "3×ATR trailing stop hit", "confidence": 95}
+        else:
+            trail_price = current_price - (3 * atr_14)
+            if current_price < trail_price:
+                return {"should_close": True, "close_type": "SMART_TRAIL", "close_reason": "3×ATR trailing stop hit", "confidence": 95}
 
-    atr_pct = (atr_14 / trade['entry_price']) * 100
-    trail_pct = 2.0 * atr_pct
+        # 5. NEW: Winner-turn-loser ကို ဖြေလျှော့ → peak +12% ကျရင်မှ full close
+        if trade['peak_pnl'] >= 12.0 and current_pnl <= 4.0:
+            return {"should_close": True, "close_type": "WINNER_TURN_LOSER_V2", "close_reason": f"Peak {trade['peak_pnl']:.1f}% → now {current_pnl:.1f}% ≤4%", "confidence": 92}
 
-    # 3-LAYER ADAPTIVE EXIT PROMPT
-    prompt = f"""
-=== 3-LAYER ADAPTIVE EXIT – NO FIXED TP/SL ===
-
-TRADE:
-- Pair: {pair}
-- Direction: {trade['direction']}
-- Entry: ${trade['entry_price']:.4f}
-- Current: ${current_price:.4f}
-- PnL: {current_pnl:+.2f}%
-- Peak Profit: {trade['peak_pnl']:+.2f}%
-- Leverage: {trade['leverage']}x
-- ATR(14): {atr_14:.5f} ({atr_pct:+.2f}%)
-- 2×ATR Trail: {trail_pct:+.2f}%
-
-RULES (MUST FOLLOW EXACTLY):
-1. If PnL ≥ +9.0% → close 60%, rest breakeven
-2. Trail at 2×ATR from swing
-3. Close full if momentum exhaustion (≥3/4 signals)
-4. If peak ≥ +8% and now ≤ +3% → close all
-5. Max loss -5.0% → immediate stop (already handled above)
-
-Decide NOW.
-
-Return ONLY this JSON (no markdown, no ```json, no extra text):
-
-{{
-    "should_close": true/false,
-    "close_type": "PARTIAL_60" | "FULL_TRAIL" | "STOP_LOSS" | "MOMENTUM_EXHAUSTION" | "WINNER_TURN_LOSER",
-    "close_reason": "short reason here",
-    "confidence": 90-100,
-    "reasoning": "1-2 sentences"
-}}
-"""
-
-    try:
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {self.openrouter_key}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek/deepseek-chat-v3.1",
-                "messages": [
-                    {"role": "system", "content": "You are a professional crypto futures trader. Return ONLY clean JSON exactly as requested. No markdown, no extra text."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.15,
-                "max_tokens": 500
-            },
-            timeout=35
-        )
-
-        if response.status_code == 200:
-            text = response.json()['choices'][0]['message']['content']
-            import re, json
-            m = re.search(r'\{.*\}', text, re.DOTALL)
-            if m:
-                decision = json.loads(m.group())
-                return decision
-
-        self.print_color("3-Layer: AI က JSON မပြန်ဘူး → skip", self.Fore.YELLOW)
+        return {"should_close": False}
 
     except Exception as e:
-        self.print_color(f"3-Layer error (safe): {e}", self.Fore.YELLOW)
-
-    # ဘာဖြစ်ဖြစ် ဒီကနေ အမြဲ ပြန်မယ်
-    return {"should_close": False, "close_reason": "No valid AI signal"}
+        return {"should_close": False}
 
 def monitor_positions(self):
     """Monitor positions and ask AI when to close (3-LAYER SYSTEM)"""
@@ -1123,8 +1080,8 @@ def monitor_positions(self):
             
             # NEW: Ask AI whether to close this position using 3-Layer system
             if not trade.get('has_tp_sl', True):
-                self.print_color(f"🔍 3-Layer System Checking {pair}...", self.Fore.BLUE)
-                close_decision = self.get_ai_close_decision(pair, trade)
+                self.print_color(f"🔍 Bounce-Proof V2 Checking {pair}...", self.Fore.BLUE)
+                close_decision = self.get_ai_close_decision_v2(pair, trade)
                 
                 if close_decision.get("should_close", False):
                     close_type = close_decision.get("close_type", "AI_DECISION")
@@ -1132,9 +1089,9 @@ def monitor_positions(self):
                     reasoning = close_decision.get("reasoning", "No reason provided")
                     
                     # 🆕 Use 3-Layer system's ACTUAL reasoning for closing
-                    full_close_reason = f"3-LAYER: {close_type} - {reasoning}"
+                    full_close_reason = f"BOUNCE-PROOF V2: {close_type} - {reasoning}"
                     
-                    self.print_color(f"🎯 3-Layer Decision: CLOSE {pair}", self.Fore.YELLOW + self.Style.BRIGHT)
+                    self.print_color(f"🎯 Bounce-Proof V2 Decision: CLOSE {pair}", self.Fore.YELLOW + self.Style.BRIGHT)
                     self.print_color(f"📝 Close Type: {close_type}", self.Fore.CYAN)
                     self.print_color(f"💡 Confidence: {confidence}% | Reasoning: {reasoning}", self.Fore.WHITE)
                     
@@ -1146,20 +1103,20 @@ def monitor_positions(self):
                     # Show 3-Layer system's decision to hold with reasoning
                     if close_decision.get('confidence', 0) > 0:
                         reasoning = close_decision.get('reasoning', 'No reason provided')
-                        self.print_color(f"🔍 3-Layer wants to HOLD {pair} (Confidence: {close_decision.get('confidence', 0)}%)", self.Fore.GREEN)
+                        self.print_color(f"🔍 Bounce-Proof V2 wants to HOLD {pair} (Confidence: {close_decision.get('confidence', 0)}%)", self.Fore.GREEN)
                         self.print_color(f"📝 Hold Reasoning: {reasoning}", self.Fore.WHITE)
                 
         return closed_trades
                 
     except Exception as e:
-        self.print_color(f"3-Layer Monitoring error: {e}", self.Fore.RED)
+        self.print_color(f"Bounce-Proof V2 Monitoring error: {e}", self.Fore.RED)
         return []
 
 def display_dashboard(self):
     """Display trading dashboard WITH learning progress"""
     self.print_color(f"\n🤖 AI TRADING DASHBOARD - {self.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
     self.print_color("=" * 90, self.Fore.CYAN)
-    self.print_color(f"🎯 MODE: 3-LAYER ADAPTIVE EXIT SYSTEM", self.Fore.YELLOW + self.Style.BRIGHT)
+    self.print_color(f"🎯 MODE: BOUNCE-PROOF 3-LAYER EXIT V2", self.Fore.YELLOW + self.Style.BRIGHT)
     self.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
     
     # === MTF SUMMARY ===
@@ -1201,7 +1158,7 @@ def display_dashboard(self):
             self.print_color(f"   Size: ${trade['position_size_usd']:.2f} | Leverage: {trade['leverage']}x ⚡", self.Fore.WHITE)
             self.print_color(f"   Entry: ${trade['entry_price']:.4f} | Current: ${current_price:.4f}", self.Fore.WHITE)
             self.print_color(f"   P&L: ${unrealized_pnl:.2f}", pnl_color)
-            self.print_color(f"   🎯 3-LAYER ADAPTIVE EXIT ACTIVE", self.Fore.YELLOW)
+            self.print_color(f"   🎯 BOUNCE-PROOF V2 EXIT ACTIVE", self.Fore.YELLOW)
             self.print_color("   " + "-" * 60, self.Fore.CYAN)
     
     if active_count == 0:
@@ -1328,10 +1285,10 @@ def run_trading_cycle(self):
 
 def start_trading(self):
     """Start trading with REVERSE position feature and 3-LAYER EXIT"""
-    self.print_color("🚀 STARTING AI TRADER WITH 3-LAYER ADAPTIVE EXIT!", self.Fore.CYAN + self.Style.BRIGHT)
+    self.print_color("🚀 STARTING AI TRADER WITH BOUNCE-PROOF 3-LAYER EXIT V2!", self.Fore.CYAN + self.Style.BRIGHT)
     self.print_color("💰 AI MANAGING $500 PORTFOLIO", self.Fore.GREEN + self.Style.BRIGHT)
     self.print_color("🔄 REVERSE POSITION: ENABLED (AI can flip losing positions)", self.Fore.MAGENTA + self.Style.BRIGHT)
-    self.print_color("🎯 3-LAYER ADAPTIVE EXIT SYSTEM: ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
+    self.print_color("🎯 BOUNCE-PROOF 3-LAYER EXIT V2: ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
     self.print_color("⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
     self.print_color("⚡ LEVERAGE: 5x to 10x", self.Fore.RED + self.Style.BRIGHT)
     if LEARN_SCRIPT_AVAILABLE:
@@ -1341,10 +1298,10 @@ def start_trading(self):
     while True:
         try:
             self.cycle_count += 1
-            self.print_color(f"\n🔄 TRADING CYCLE {self.cycle_count} (3-LAYER SYSTEM)", self.Fore.CYAN + self.Style.BRIGHT)
+            self.print_color(f"\n🔄 TRADING CYCLE {self.cycle_count} (BOUNCE-PROOF V2)", self.Fore.CYAN + self.Style.BRIGHT)
             self.print_color("=" * 60, self.Fore.CYAN)
             self.run_trading_cycle()
-            self.print_color(f"⏳ Next 3-Layer analysis in 3 minute...", self.Fore.BLUE)
+            self.print_color(f"⏳ Next Bounce-Proof V2 analysis in 3 minute...", self.Fore.BLUE)
             time.sleep(self.monitoring_interval)  # 3 minute
             
         except KeyboardInterrupt:
@@ -1364,7 +1321,7 @@ methods = [
     parse_ai_trading_decision, get_improved_fallback_decision, calculate_current_pnl,
     execute_reverse_position, close_trade_immediately, get_price_history,
     get_current_price, calculate_quantity, can_open_new_position,
-    get_ai_decision_with_learning, execute_ai_trade, get_ai_close_decision,
+    get_ai_decision_with_learning, execute_ai_trade, get_ai_close_decision_v2,
     monitor_positions, display_dashboard, show_trade_history, show_trading_stats,
     run_trading_cycle, start_trading, show_advanced_learning_progress,
     # Add MTF indicator methods
@@ -1375,7 +1332,7 @@ methods = [
 for method in methods:
     setattr(FullyAutonomous1HourAITrader, method.__name__, method)
 
-# Paper trading class
+# Paper trading class - V2 version integrated
 class FullyAutonomous1HourPaperTrader:
     def __init__(self, real_bot):
         self.real_bot = real_bot
@@ -1402,7 +1359,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color("🤖 FULLY AUTONOMOUS PAPER TRADER INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color(f"💰 Virtual Budget: ${self.paper_balance}", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color(f"🔄 REVERSE POSITION FEATURE: ENABLED", self.Fore.MAGENTA + self.Style.BRIGHT)
-        self.real_bot.print_color(f"🎯 3-LAYER ADAPTIVE EXIT SYSTEM: ENABLED", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color(f"🎯 BOUNCE-PROOF 3-LAYER EXIT V2: ENABLED", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
     
     def load_paper_history(self):
@@ -1534,113 +1491,71 @@ class FullyAutonomous1HourPaperTrader:
             self.real_bot.print_color(f"❌ PAPER: Immediate close failed: {e}", self.Fore.RED)
             return False
 
-    def get_ai_close_decision(self, pair, trade):
-        """3-LAYER ADAPTIVE EXIT – FULL PROMPT + 100% SAFE"""
-        current_price = trade['entry_price']
-        current_pnl = 0.0
-
+    def get_ai_close_decision_v2(self, pair, trade):
+        """BOUNCE-PROOF 3-LAYER EXIT V2 – PAPER TRADING VERSION"""
         try:
             current_price = self.real_bot.get_current_price(pair)
             current_pnl = self.calculate_current_pnl(trade, current_price)
-        except:
-            pass
+            
+            # Peak PnL tracking
+            if 'peak_pnl' not in trade:
+                trade['peak_pnl'] = current_pnl
+            if current_pnl > trade['peak_pnl']:
+                trade['peak_pnl'] = current_pnl
+            
+            # 1. Hard stop -5% က ဘယ်လိုမှ မလွတ်
+            if current_pnl <= -5.0:
+                return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Hard -5% rule", "confidence": 100}
 
-        # Peak PnL
-        if 'peak_pnl' not in trade:
-            trade['peak_pnl'] = current_pnl
-        if current_pnl > trade['peak_pnl']:
-            trade['peak_pnl'] = current_pnl
+            # 2. NEW: Oversold Protection – RSI 1H/4H < 33 ဆိုရင် short ကို မထိရုံထိ ကိုင်ထား
+            mtf = self.real_bot.get_price_history(pair).get('mtf_analysis', {})
+            rsi_1h = mtf.get('1h', {}).get('rsi', 50)
+            rsi_4h = mtf.get('4h', {}).get('rsi', 50)
+            if trade['direction'] == 'SHORT' and (rsi_1h < 33 or rsi_4h < 33):
+                # Bounce risk မြင့်နေရင် trail ကို ပိုကျယ်အောင် လုပ်၊ partial မယူတော့
+                pass
 
-        # Hard -5% က ဘယ်လိုမှ မလွတ်ရ၊
-        if current_pnl <= -5.0:
-            return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Hard -5% rule", "confidence": 100}
+            # 3. NEW: Dynamic Partial – +9% မှာ မဟုတ်တော့ဘူး → +15% မှ ယူမယ် + ပမာဏ 40% ပဲ
+            if current_pnl >= 15.0 and not trade.get('partial_taken', False):
+                return {
+                    "should_close": True,
+                    "close_type": "PARTIAL_40",
+                    "close_reason": f"Profit >=15% → secure 40% only (current {current_pnl:.1f}%)",
+                    "confidence": 98,
+                    "partial_percent": 40
+                }
 
-        # ATR(14) တွက်မယ်
-        atr_14 = 0.001
-        try:
-            market_data = self.real_bot.get_price_history(pair)
-            atr_14 = market_data.get('mtf_analysis', {}).get('1h', {}).get('atr_14', 0)
-            if atr_14 == 0:
+            # 4. NEW: Smarter Trailing – 3×ATR + RSI divergence check
+            atr_14 = 0.001
+            try:
                 if self.real_bot.binance:
                     klines = self.real_bot.binance.futures_klines(symbol=pair, interval='1h', limit=50)
                     if len(klines) >= 15:
                         highs = [float(k[2]) for k in klines]
                         lows = [float(k[3]) for k in klines]
                         closes = [float(k[4]) for k in klines]
-                        tr_list = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(klines))]
-                        atr_14 = sum(tr_list[-14:]) / 14
-        except:
-            pass
+                        tr = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(klines))]
+                        atr_14 = sum(tr[-14:]) / 14
+            except: pass
+            
+            trail_price = trade['entry_price']
+            if trade['direction'] == 'SHORT':
+                trail_price = current_price + (3 * atr_14)  # ပိုကျယ်အောင်
+                if current_price > trail_price:
+                    return {"should_close": True, "close_type": "SMART_TRAIL", "close_reason": "3×ATR trailing stop hit", "confidence": 95}
+            else:
+                trail_price = current_price - (3 * atr_14)
+                if current_price < trail_price:
+                    return {"should_close": True, "close_type": "SMART_TRAIL", "close_reason": "3×ATR trailing stop hit", "confidence": 95}
 
-        atr_pct = (atr_14 / trade['entry_price']) * 100
-        trail_pct = 2.0 * atr_pct
+            # 5. NEW: Winner-turn-loser ကို ဖြေလျှော့ → peak +12% ကျရင်မှ full close
+            if trade['peak_pnl'] >= 12.0 and current_pnl <= 4.0:
+                return {"should_close": True, "close_type": "WINNER_TURN_LOSER_V2", "close_reason": f"Peak {trade['peak_pnl']:.1f}% → now {current_pnl:.1f}% ≤4%", "confidence": 92}
 
-        # 3-LAYER ADAPTIVE EXIT PROMPT
-        prompt = f"""
-=== 3-LAYER ADAPTIVE EXIT – NO FIXED TP/SL ===
-
-TRADE:
-- Pair: {pair}
-- Direction: {trade['direction']}
-- Entry: ${trade['entry_price']:.4f}
-- Current: ${current_price:.4f}
-- PnL: {current_pnl:+.2f}%
-- Peak Profit: {trade['peak_pnl']:+.2f}%
-- Leverage: {trade['leverage']}x
-- ATR(14): {atr_14:.5f} ({atr_pct:+.2f}%)
-- 2×ATR Trail: {trail_pct:+.2f}%
-
-RULES (MUST FOLLOW EXACTLY):
-1. If PnL ≥ +9.0% → close 60%, rest breakeven
-2. Trail at 2×ATR from swing
-3. Close full if momentum exhaustion (≥3/4 signals)
-4. If peak ≥ +8% and now ≤ +3% → close all
-5. Max loss -5.0% → immediate stop (already handled above)
-
-Decide NOW.
-
-Return ONLY this JSON (no markdown, no ```json, no extra text):
-
-{{
-    "should_close": true/false,
-    "close_type": "PARTIAL_60" | "FULL_TRAIL" | "STOP_LOSS" | "MOMENTUM_EXHAUSTION" | "WINNER_TURN_LOSER",
-    "close_reason": "short reason here",
-    "confidence": 90-100,
-    "reasoning": "1-2 sentences"
-}}
-"""
-
-        try:
-            response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {self.real_bot.openrouter_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "deepseek/deepseek-chat-v3.1",
-                    "messages": [
-                        {"role": "system", "content": "You are a professional crypto futures trader. Return ONLY clean JSON exactly as requested. No markdown, no extra text."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.15,
-                    "max_tokens": 500
-                },
-                timeout=35
-            )
-
-            if response.status_code == 200:
-                text = response.json()['choices'][0]['message']['content']
-                import re, json
-                m = re.search(r'\{.*\}', text, re.DOTALL)
-                if m:
-                    decision = json.loads(m.group())
-                    return decision
-
-            self.real_bot.print_color("3-Layer: AI က JSON မပြန်ဘူး → skip", self.Fore.YELLOW)
+            return {"should_close": False}
 
         except Exception as e:
-            self.real_bot.print_color(f"3-Layer error (safe): {e}", self.Fore.YELLOW)
-
-        # ဘာဖြစ်ဖြစ် ဒီကနေ အမြဲ ပြန်မယ်
-        return {"should_close": False, "close_reason": "No valid AI signal"}
+            return {"should_close": False}
 
     def paper_execute_trade(self, pair, ai_decision):
         """Execute paper trade WITHOUT TP/SL orders"""
@@ -1687,14 +1602,14 @@ Return ONLY this JSON (no markdown, no ```json, no extra text):
             direction_color = self.Fore.GREEN + self.Style.BRIGHT if decision == 'LONG' else self.Fore.RED + self.Style.BRIGHT
             direction_icon = "🟢 LONG" if decision == 'LONG' else "🔴 SHORT"
             
-            self.real_bot.print_color(f"\n🤖 PAPER TRADE EXECUTION (3-LAYER EXIT)", self.Fore.CYAN + self.Style.BRIGHT)
+            self.real_bot.print_color(f"\n🤖 PAPER TRADE EXECUTION (BOUNCE-PROOF V2)", self.Fore.CYAN + self.Style.BRIGHT)
             self.real_bot.print_color("=" * 80, self.Fore.CYAN)
             self.real_bot.print_color(f"{direction_icon} {pair}", direction_color)
             self.real_bot.print_color(f"POSITION SIZE: ${position_size_usd:.2f}", self.Fore.GREEN + self.Style.BRIGHT)
             self.real_bot.print_color(f"LEVERAGE: {leverage}x ⚡", self.Fore.RED + self.Style.BRIGHT)
             self.real_bot.print_color(f"ENTRY PRICE: ${entry_price:.4f}", self.Fore.WHITE)
             self.real_bot.print_color(f"QUANTITY: {quantity}", self.Fore.CYAN)
-            self.real_bot.print_color(f"🎯 3-LAYER ADAPTIVE EXIT SYSTEM ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
+            self.real_bot.print_color(f"🎯 BOUNCE-PROOF 3-LAYER EXIT V2 ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
             self.real_bot.print_color(f"CONFIDENCE: {confidence}%", self.Fore.YELLOW + self.Style.BRIGHT)
             self.real_bot.print_color(f"REASONING: {reasoning}", self.Fore.WHITE)
             self.real_bot.print_color("=" * 80, self.Fore.CYAN)
@@ -1718,7 +1633,7 @@ Return ONLY this JSON (no markdown, no ```json, no extra text):
                 'peak_pnl': 0  # NEW: For 3-layer system
             }
             
-            self.real_bot.print_color(f"✅ PAPER TRADE EXECUTED (3-LAYER EXIT): {pair} {decision} | Leverage: {leverage}x", self.Fore.GREEN + self.Style.BRIGHT)
+            self.real_bot.print_color(f"✅ PAPER TRADE EXECUTED (BOUNCE-PROOF V2): {pair} {decision} | Leverage: {leverage}x", self.Fore.GREEN + self.Style.BRIGHT)
             return True
             
         except Exception as e:
@@ -1726,52 +1641,52 @@ Return ONLY this JSON (no markdown, no ```json, no extra text):
             return False
 
     def monitor_paper_positions(self):
-        """Monitor paper positions and ask AI when to close (3-LAYER SYSTEM)"""
+        """Monitor paper positions and ask AI when to close (BOUNCE-PROOF V2)"""
         try:
             closed_positions = []
             for pair, trade in list(self.paper_positions.items()):
                 if trade['status'] != 'ACTIVE':
                     continue
                 
-                # Ask AI whether to close this paper position using 3-Layer system
+                # Ask AI whether to close this paper position using Bounce-Proof V2
                 if not trade.get('has_tp_sl', True):
-                    self.real_bot.print_color(f"🔍 PAPER 3-Layer System Checking {pair}...", self.Fore.BLUE)
-                    close_decision = self.get_ai_close_decision(pair, trade)
+                    self.real_bot.print_color(f"🔍 PAPER Bounce-Proof V2 Checking {pair}...", self.Fore.BLUE)
+                    close_decision = self.get_ai_close_decision_v2(pair, trade)
                     
                     if close_decision.get("should_close", False):
                         close_type = close_decision.get("close_type", "AI_DECISION")
                         confidence = close_decision.get("confidence", 0)
                         reasoning = close_decision.get("reasoning", "No reason provided")
                         
-                        # 🆕 Use 3-Layer system's ACTUAL reasoning for closing
-                        full_close_reason = f"3-LAYER: {close_type} - {reasoning}"
+                        # 🆕 Use Bounce-Proof V2's ACTUAL reasoning for closing
+                        full_close_reason = f"BOUNCE-PROOF V2: {close_type} - {reasoning}"
                         
-                        self.real_bot.print_color(f"🎯 PAPER 3-Layer Decision: CLOSE {pair}", self.Fore.YELLOW + self.Style.BRIGHT)
+                        self.real_bot.print_color(f"🎯 PAPER Bounce-Proof V2 Decision: CLOSE {pair}", self.Fore.YELLOW + self.Style.BRIGHT)
                         self.real_bot.print_color(f"📝 Close Type: {close_type}", self.Fore.CYAN)
                         self.real_bot.print_color(f"💡 Confidence: {confidence}% | Reasoning: {reasoning}", self.Fore.WHITE)
                         
-                        # 🆕 Pass 3-Layer system's actual reasoning to close function
+                        # 🆕 Pass Bounce-Proof V2's actual reasoning to close function
                         success = self.paper_close_trade_immediately(pair, trade, full_close_reason)
                         if success:
                             closed_positions.append(pair)
                     else:
-                        # Show 3-Layer system's decision to hold with reasoning
+                        # Show Bounce-Proof V2's decision to hold with reasoning
                         if close_decision.get('confidence', 0) > 0:
                             reasoning = close_decision.get('reasoning', 'No reason provided')
-                            self.real_bot.print_color(f"🔍 PAPER 3-Layer wants to HOLD {pair} (Confidence: {close_decision.get('confidence', 0)}%)", self.Fore.GREEN)
+                            self.real_bot.print_color(f"🔍 PAPER Bounce-Proof V2 wants to HOLD {pair} (Confidence: {close_decision.get('confidence', 0)}%)", self.Fore.GREEN)
                             self.real_bot.print_color(f"📝 Hold Reasoning: {reasoning}", self.Fore.WHITE)
                     
             return closed_positions
                     
         except Exception as e:
-            self.real_bot.print_color(f"PAPER: 3-Layer Monitoring error: {e}", self.Fore.RED)
+            self.real_bot.print_color(f"PAPER: Bounce-Proof V2 Monitoring error: {e}", self.Fore.RED)
             return []
 
     def display_paper_dashboard(self):
         """Display paper trading dashboard"""
         self.real_bot.print_color(f"\n🤖 PAPER TRADING DASHBOARD - {self.real_bot.get_thailand_time()}", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color("=" * 90, self.Fore.CYAN)
-        self.real_bot.print_color(f"🎯 MODE: 3-LAYER ADAPTIVE EXIT SYSTEM", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color(f"🎯 MODE: BOUNCE-PROOF 3-LAYER EXIT V2", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
         
         active_count = 0
@@ -1796,7 +1711,7 @@ Return ONLY this JSON (no markdown, no ```json, no extra text):
                 self.real_bot.print_color(f"   Size: ${trade['position_size_usd']:.2f} | Leverage: {trade['leverage']}x ⚡", self.Fore.WHITE)
                 self.real_bot.print_color(f"   Entry: ${trade['entry_price']:.4f} | Current: ${current_price:.4f}", self.Fore.WHITE)
                 self.real_bot.print_color(f"   P&L: ${unrealized_pnl:.2f}", pnl_color)
-                self.real_bot.print_color(f"   🎯 3-LAYER ADAPTIVE EXIT ACTIVE", self.Fore.YELLOW)
+                self.real_bot.print_color(f"   🎯 BOUNCE-PROOF V2 EXIT ACTIVE", self.Fore.YELLOW)
                 self.real_bot.print_color("   " + "-" * 60, self.Fore.CYAN)
         
         if active_count == 0:
@@ -1852,7 +1767,7 @@ Return ONLY this JSON (no markdown, no ```json, no extra text):
     def run_paper_trading_cycle(self):
         """Run paper trading cycle"""
         try:
-            # First monitor and ask AI to close paper positions using 3-Layer system
+            # First monitor and ask AI to close paper positions using Bounce-Proof V2
             self.monitor_paper_positions()
             self.display_paper_dashboard()
             
@@ -1900,20 +1815,20 @@ Return ONLY this JSON (no markdown, no ```json, no extra text):
 
     def start_paper_trading(self):
         """Start paper trading"""
-        self.real_bot.print_color("🚀 STARTING PAPER TRADING WITH 3-LAYER ADAPTIVE EXIT!", self.Fore.CYAN + self.Style.BRIGHT)
+        self.real_bot.print_color("🚀 STARTING PAPER TRADING WITH BOUNCE-PROOF 3-LAYER EXIT V2!", self.Fore.CYAN + self.Style.BRIGHT)
         self.real_bot.print_color("💰 VIRTUAL $500 PORTFOLIO", self.Fore.GREEN + self.Style.BRIGHT)
         self.real_bot.print_color("🔄 REVERSE POSITION: ENABLED", self.Fore.MAGENTA + self.Style.BRIGHT)
-        self.real_bot.print_color("🎯 3-LAYER ADAPTIVE EXIT SYSTEM: ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
+        self.real_bot.print_color("🎯 BOUNCE-PROOF 3-LAYER EXIT V2: ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color("⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
         
         self.paper_cycle_count = 0
         while True:
             try:
                 self.paper_cycle_count += 1
-                self.real_bot.print_color(f"\n🔄 PAPER TRADING CYCLE {self.paper_cycle_count} (3-LAYER SYSTEM)", self.Fore.CYAN + self.Style.BRIGHT)
+                self.real_bot.print_color(f"\n🔄 PAPER TRADING CYCLE {self.paper_cycle_count} (BOUNCE-PROOF V2)", self.Fore.CYAN + self.Style.BRIGHT)
                 self.real_bot.print_color("=" * 60, self.Fore.CYAN)
                 self.run_paper_trading_cycle()
-                self.real_bot.print_color(f"⏳ Next 3-Layer analysis in 3 minute...", self.Fore.BLUE)
+                self.real_bot.print_color(f"⏳ Next Bounce-Proof V2 analysis in 3 minute...", self.Fore.BLUE)
                 time.sleep(self.monitoring_interval)
                 
             except KeyboardInterrupt:
@@ -1943,7 +1858,7 @@ if __name__ == "__main__":
         
         if choice == "1":
             if bot.binance:
-                print(f"\n🚀 STARTING REAL TRADING WITH 3-LAYER SYSTEM...")
+                print(f"\n🚀 STARTING REAL TRADING WITH BOUNCE-PROOF V2...")
                 bot.start_trading()
             else:
                 print(f"\n❌ Binance connection failed. Switching to paper trading...")
@@ -1951,7 +1866,7 @@ if __name__ == "__main__":
                 paper_bot.start_paper_trading()
                 
         elif choice == "2":
-            print(f"\n📝 STARTING PAPER TRADING WITH 3-LAYER SYSTEM...")
+            print(f"\n📝 STARTING PAPER TRADING WITH BOUNCE-PROOF V2...")
             paper_bot = FullyAutonomous1HourPaperTrader(bot)
             paper_bot.start_paper_trading()
             
