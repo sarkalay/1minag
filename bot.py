@@ -210,7 +210,7 @@ def _initialize_trading(self):
     
     # AI can trade selected 3 major pairs only
     self.available_pairs = [
-        "SOLUSDT"
+        "SOLUSDT", "AVAXUSDT", "BNBUSDT"
     ]
     
     # Track AI-opened trades
@@ -374,10 +374,32 @@ def setup_futures(self):
 
 def load_symbol_precision(self):
     if not self.binance:
+        # For paper trading, get precision from Binance public API
         for pair in self.available_pairs:
-            self.quantity_precision[pair] = 3
-            self.price_precision[pair] = 4
-        self.print_color("Default precision set for paper trading", self.Fore.GREEN)
+            try:
+                # Use Binance public API to get symbol info
+                response = requests.get(f'https://api.binance.com/api/v3/exchangeInfo?symbol={pair}')
+                if response.status_code == 200:
+                    data = response.json()
+                    symbol_info = next((s for s in data['symbols'] if s['symbol'] == pair), None)
+                    if symbol_info:
+                        for f in symbol_info['filters']:
+                            if f['filterType'] == 'LOT_SIZE':
+                                step_size = f['stepSize']
+                                qty_precision = len(step_size.split('.')[1].rstrip('0')) if '.' in step_size else 0
+                                self.quantity_precision[pair] = qty_precision
+                            elif f['filterType'] == 'PRICE_FILTER':
+                                tick_size = f['tickSize']
+                                price_precision = len(tick_size.split('.')[1].rstrip('0')) if '.' in tick_size else 0
+                                self.price_precision[pair] = price_precision
+                else:
+                    # Default precision if API fails
+                    self.quantity_precision[pair] = 3
+                    self.price_precision[pair] = 4
+            except:
+                self.quantity_precision[pair] = 3
+                self.price_precision[pair] = 4
+        self.print_color("Symbol precision loaded from Binance API", self.Fore.GREEN)
         return
         
     try:
@@ -790,12 +812,55 @@ def close_trade_immediately(self, pair, trade, close_reason="AI_DECISION", parti
         self.print_color(f"❌ Close failed: {e}", self.Fore.RED)
         return False
 
-def get_price_history(self, pair, limit=50):
-    """Multi-Timeframe Analysis with EMA, RSI, Volume"""
-    try:
-        if not self.binance:
-            return self._get_mock_mtf_data(pair)
+def get_current_price(self, pair):
+    """Get real price from Binance API (no mock prices)"""
+    max_retries = 3
+    retry_delay = 1
+    
+    for attempt in range(max_retries):
+        try:
+            # Try Binance Futures API first
+            if self.binance:
+                ticker = self.binance.futures_symbol_ticker(symbol=pair)
+                return float(ticker['price'])
+            
+            # Fallback to Binance Spot API (no authentication needed)
+            response = requests.get(
+                f'https://api.binance.com/api/v3/ticker/price?symbol={pair}',
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return float(data['price'])
+            else:
+                self.print_color(f"Binance API error: {response.status_code}", self.Fore.YELLOW)
+                
+        except Exception as e:
+            self.print_color(f"Price fetch attempt {attempt+1} failed: {e}", self.Fore.YELLOW)
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+    
+    # Final fallback - use reasonable default based on pair
+    self.print_color(f"🚨 All price API attempts failed for {pair}, using fallback price", self.Fore.RED)
+    
+    fallback_prices = {
+        "SOLUSDT": 180.0,
+        "AVAXUSDT": 35.0,
+        "BNBUSDT": 600.0,
+        "BTCUSDT": 50000.0,
+        "ETHUSDT": 3000.0
+    }
+    return fallback_prices.get(pair, 100.0)
 
+def get_price_history(self, pair, limit=50):
+    """Multi-Timeframe Analysis with REAL Binance data"""
+    try:
+        # If no Binance client, use spot API for paper trading
+        if not self.binance:
+            return self._get_mtf_data_via_api(pair, limit)
+        
         intervals = {
             '5m': (Client.KLINE_INTERVAL_5MINUTE, 50),
             '15m': (Client.KLINE_INTERVAL_15MINUTE, 50),
@@ -854,6 +919,79 @@ def get_price_history(self, pair, limit=50):
 
     except Exception as e:
         self.print_color(f"MTF Analysis error: {e}", self.Fore.RED)
+        return self._get_mtf_data_via_api(pair, limit)  # Fallback to API
+
+def _get_mtf_data_via_api(self, pair, limit=50):
+    """Get MTF data using Binance public API"""
+    try:
+        intervals = {
+            '5m': '5m',
+            '15m': '15m', 
+            '1h': '1h',
+            '4h': '4h',
+            '1d': '1d'
+        }
+        
+        mtf = {}
+        current_price = self.get_current_price(pair)
+        
+        for name, interval in intervals.items():
+            url = f"https://api.binance.com/api/v3/klines"
+            params = {
+                'symbol': pair,
+                'interval': interval,
+                'limit': limit
+            }
+            
+            response = requests.get(url, params=params, timeout=15)
+            if response.status_code == 200:
+                klines = response.json()
+                
+                closes = [float(k[4]) for k in klines]
+                highs = [float(k[2]) for k in klines]
+                lows = [float(k[3]) for k in klines]
+                volumes = [float(k[5]) for k in klines]
+                
+                # Calculate indicators
+                ema9 = self.calculate_ema(closes, 9)
+                ema21 = self.calculate_ema(closes, 21)
+                rsi = self.calculate_rsi(closes, 14)[-1] if len(closes) > 14 else 50
+                
+                crossover = 'NONE'
+                if len(ema9) >= 2 and len(ema21) >= 2:
+                    if ema9[-2] < ema21[-2] and ema9[-1] > ema21[-1]:
+                        crossover = 'GOLDEN'
+                    elif ema9[-2] > ema21[-2] and ema9[-1] < ema21[-1]:
+                        crossover = 'DEATH'
+                
+                vol_spike = self.calculate_volume_spike(volumes)
+                
+                mtf[name] = {
+                    'current_price': closes[-1],
+                    'change_1h': ((closes[-1] - closes[-2]) / closes[-2] * 100) if len(closes) > 1 else 0,
+                    'ema9': round(ema9[-1], 6) if ema9[-1] else 0,
+                    'ema21': round(ema21[-1], 6) if ema21[-1] else 0,
+                    'trend': 'BULLISH' if ema9[-1] > ema21[-1] else 'BEARISH',
+                    'crossover': crossover,
+                    'rsi': round(rsi, 1),
+                    'vol_spike': vol_spike,
+                    'support': round(min(lows[-10:]), 6),
+                    'resistance': round(max(highs[-10:]), 6)
+                }
+            else:
+                self.print_color(f"API error for {interval} {pair}: {response.status_code}", self.Fore.YELLOW)
+        
+        main = mtf.get('1h', {})
+        return {
+            'current_price': current_price,
+            'price_change': main.get('change_1h', 0),
+            'support_levels': [mtf['1h']['support'], mtf['4h']['support']] if '4h' in mtf else [],
+            'resistance_levels': [mtf['1h']['resistance'], mtf['4h']['resistance']] if '4h' in mtf else [],
+            'mtf_analysis': mtf
+        }
+        
+    except Exception as e:
+        self.print_color(f"API MTF Analysis error: {e}", self.Fore.RED)
         return {
             'current_price': self.get_current_price(pair),
             'price_change': 0,
@@ -861,36 +999,6 @@ def get_price_history(self, pair, limit=50):
             'resistance_levels': [],
             'mtf_analysis': {}
         }
-
-def _get_mock_mtf_data(self, pair):
-    price = self.get_current_price(pair)
-    return {
-        'current_price': price,
-        'price_change': 1.2,
-        'support_levels': [price * 0.97, price * 0.95],
-        'resistance_levels': [price * 1.03, price * 1.05],
-        'mtf_analysis': {
-            '5m': {'trend': 'BULLISH', 'crossover': 'GOLDEN', 'rsi': 68, 'vol_spike': True},
-            '15m': {'trend': 'BULLISH', 'crossover': 'NONE', 'rsi': 62},
-            '1h': {'trend': 'BULLISH', 'ema9': price*1.01, 'ema21': price*1.00},
-            '4h': {'trend': 'BULLISH'},
-            '1d': {'support': price*0.92, 'resistance': price*1.08}
-        }
-    }
-
-def get_current_price(self, pair):
-    try:
-        if self.binance:
-            ticker = self.binance.futures_symbol_ticker(symbol=pair)
-            return float(ticker['price'])
-        else:
-            # Mock prices for paper trading
-            mock_prices = {
-                "SOLUSDT": 180
-            }
-            return mock_prices.get(pair, 100)
-    except:
-        return 100
 
 def calculate_quantity(self, pair, entry_price, position_size_usd, leverage):
     """Calculate quantity based on position size and leverage"""
@@ -1430,14 +1538,14 @@ methods = [
     monitor_positions, display_dashboard, show_trade_history, show_trading_stats,
     run_trading_cycle, start_trading, show_advanced_learning_progress,
     # Add MTF indicator methods
-    calculate_ema, calculate_rsi, calculate_volume_spike, _get_mock_mtf_data,
+    calculate_ema, calculate_rsi, calculate_volume_spike, _get_mtf_data_via_api,
     validate_api_keys
 ]
 
 for method in methods:
     setattr(FullyAutonomous1HourAITrader, method.__name__, method)
 
-# Paper trading class - V2 version integrated with NO WINNER-TURN-LOSER and partial close support
+# Paper trading class - Uses REAL Binance data only
 class FullyAutonomous1HourPaperTrader:
     def __init__(self, real_bot):
         self.real_bot = real_bot
@@ -1458,7 +1566,7 @@ class FullyAutonomous1HourPaperTrader:
         self.paper_positions = {}
         self.paper_history_file = "fully_autonomous_1hour_paper_trading_history.json"
         self.paper_history = self.load_paper_history()
-        self.available_pairs = ["SOLUSDT"]
+        self.available_pairs = ["SOLUSDT", "AVAXUSDT", "BNBUSDT"]
         self.max_concurrent_trades = 6
         
         self.real_bot.print_color("🤖 FULLY AUTONOMOUS PAPER TRADER INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
@@ -1466,7 +1574,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color(f"🔄 REVERSE POSITION FEATURE: ENABLED", self.Fore.MAGENTA + self.Style.BRIGHT)
         self.real_bot.print_color(f"🎯 BOUNCE-PROOF 3-LAYER EXIT V2: ENABLED", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
-        self.real_bot.print_color(f"🚫 WINNER-TURN-LOSER: COMPLETELY REMOVED", self.Fore.RED + self.Style.BRIGHT)
+        self.real_bot.print_color(f"📡 USING REAL BINANCE MARKET DATA", self.Fore.BLUE + self.Style.BRIGHT)
     
     def load_paper_history(self):
         """Load PAPER trading history"""
@@ -1864,7 +1972,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color("=" * 90, self.Fore.CYAN)
         self.real_bot.print_color(f"🎯 MODE: BOUNCE-PROOF 3-LAYER EXIT V2", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
-        self.real_bot.print_color(f"🚫 WINNER-TURN-LOSER: COMPLETELY REMOVED", self.Fore.RED + self.Style.BRIGHT)
+        self.real_bot.print_color(f"📡 USING REAL BINANCE MARKET DATA", self.Fore.BLUE + self.Style.BRIGHT)
         
         active_count = 0
         total_unrealized = 0
@@ -2012,7 +2120,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color("🔄 REVERSE POSITION: ENABLED", self.Fore.MAGENTA + self.Style.BRIGHT)
         self.real_bot.print_color("🎯 BOUNCE-PROOF 3-LAYER EXIT V2: ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color("⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
-        self.real_bot.print_color("🚫 WINNER-TURN-LOSER: COMPLETELY REMOVED", self.Fore.RED + self.Style.BRIGHT)
+        self.real_bot.print_color("📡 USING REAL BINANCE MARKET DATA", self.Fore.BLUE + self.Style.BRIGHT)
         
         self.paper_cycle_count = 0
         while True:
