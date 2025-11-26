@@ -210,7 +210,7 @@ def _initialize_trading(self):
     
     # AI can trade selected 3 major pairs only
     self.available_pairs = [
-        "SOLUSDT", "AVAXUSDT", "BNBUSDT"
+        "SOLUSDT"
     ]
     
     # Track AI-opened trades
@@ -846,11 +846,7 @@ def get_current_price(self, pair):
     self.print_color(f"🚨 All price API attempts failed for {pair}, using fallback price", self.Fore.RED)
     
     fallback_prices = {
-        "SOLUSDT": 180.0,
-        "AVAXUSDT": 35.0,
-        "BNBUSDT": 600.0,
-        "BTCUSDT": 50000.0,
-        "ETHUSDT": 3000.0
+        "SOLUSDT": 140.0,
     }
     return fallback_prices.get(pair, 100.0)
 
@@ -1566,7 +1562,7 @@ class FullyAutonomous1HourPaperTrader:
         self.paper_positions = {}
         self.paper_history_file = "fully_autonomous_1hour_paper_trading_history.json"
         self.paper_history = self.load_paper_history()
-        self.available_pairs = ["SOLUSDT", "AVAXUSDT", "BNBUSDT"]
+        self.available_pairs = ["SOLUSDT"]
         self.max_concurrent_trades = 6
         
         self.real_bot.print_color("🤖 FULLY AUTONOMOUS PAPER TRADER INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
