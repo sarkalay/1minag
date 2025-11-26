@@ -148,7 +148,7 @@ def _initialize_trading(self):
     
     # AI can trade selected 3 major pairs only
     self.available_pairs = [
-        "BNBUSDT", "SOLUSDT", "AVAXUSDT"
+        "SOLUSDT"
     ]
     
     # Track AI-opened trades
