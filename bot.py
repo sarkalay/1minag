@@ -49,6 +49,68 @@ if not COLORAMA_AVAILABLE:
     Back = DummyColors() 
     Style = DummyColors()
 
+# ==================== V4.1 TRUE SMART NEVER GIVE BACK ====================
+def should_close_trade(trade, current_price, atr_14):
+    """BOUNCE-PROOF 3-LAYER EXIT - NO WINNER-TURN-LOSER"""
+    # လက်ရှိ PnL % တွက်တာ
+    if trade['direction'] == 'LONG':
+        pnl_pct = (current_price - trade['entry_price']) / trade['entry_price'] * 100 * trade['leverage']
+    else:  # SHORT
+        pnl_pct = (trade['entry_price'] - current_price) / trade['entry_price'] * 100 * trade['leverage']
+    
+    # Peak PnL အမြဲ update ထား
+    if 'peak_pnl' not in trade or pnl_pct > trade['peak_pnl']:
+        trade['peak_pnl'] = pnl_pct
+
+    peak = trade['peak_pnl']
+
+    # ==================== ၁. 60% Partial @ +9% ====================
+    if peak >= 9.0 and not trade.get('partial_done', False):
+        trade['partial_done'] = True
+        return {
+            "should_close": True,
+            "partial_percent": 60,
+            "close_type": "PARTIAL_60",
+            "reason": f"LOCK 60% PROFIT @ +{peak:.1f}% → အမြတ် ချက်ချင်း အိတ်ထဲ!",
+            "confidence": 100
+        }
+
+    # ==================== ၂. Instant Breakeven @ +12% ====================
+    if peak >= 12.0 and not trade.get('breakeven_done', False):
+        trade['breakeven_done'] = True
+        return {
+            "should_close": False,
+            "move_sl_to": trade['entry_price'],  # breakeven
+            "close_type": "BREAKEVEN_ACTIVATED",
+            "reason": f"Peak +{peak:.1f}% → ကျန် 40% ကို BREAKEVEN ချပြီး → ဘယ်လိုမှ မရှုံးနိုင်တော့ဘူး!",
+            "confidence": 100
+        }
+
+    # ==================== ၃. Dynamic Profit Floor (75% of Peak) ====================
+    if peak >= 15.0:  # Peak က +15% ကျော်မှ ဒီ rule စတယ်
+        profit_floor = peak * 0.75  # 75% အောက် မခွင့်ပြု
+        if pnl_pct <= profit_floor and trade.get('partial_done', False):
+            return {
+                "should_close": True,
+                "partial_percent": 100,  # ကျန်တဲ့ 40% အကုန်ပိတ်
+                "close_type": "PROFIT_FLOOR_HIT",
+                "reason": f"Peak {peak:.1f}% → 75% floor ({profit_floor:.1f}%) ထိပြီး → ကျန်အကုန် အမြတ်နဲ့ ပိတ်!",
+                "confidence": 100
+            }
+
+    # ==================== ၄. 2×ATR Trailing (optional boost) ====================
+    if trade.get('partial_done', False) and peak >= 9.0:
+        trail_price = current_price + (2 * atr_14) if trade['direction'] == 'LONG' else current_price - (2 * atr_14)
+        if trade['direction'] == 'LONG' and current_price <= trail_price:
+            return {"should_close": True, "partial_percent": 100, "close_type": "TRAILING_HIT", "reason": "2×ATR Trailing ထိပြီး ထွက်"}
+        if trade['direction'] == 'SHORT' and current_price >= trail_price:
+            return {"should_close": True, "partial_percent": 100, "close_type": "TRAILING_HIT", "reason": "2×ATR Trailing ထိပြီး ထွက်"}
+
+    # ==================== ၅. Winner-Turn-Loser = လုံးဝ မရှိတော့ဘူး ====================
+    # ❌❌❌ ဒီတစ်ကြောင်းကို လုံးဝ ဖျက်ထားပြီး → တစ်ခါမှ အမြတ်ပြန်မပေးတော့ဘူး
+
+    return {"should_close": False}  # မပိတ်သေးဘူး
+
 # Use conditional inheritance with proper method placement
 if LEARN_SCRIPT_AVAILABLE:
     class FullyAutonomous1HourAITrader(SelfLearningAITrader):
@@ -963,7 +1025,7 @@ def execute_ai_trade(self, pair, ai_decision):
             
             # Set leverage
             try:
-                self.binance.futures_change_leverage(symbol=pair, leverage=leverage)
+                self.binance.futances_change_leverage(symbol=pair, leverage=leverage)
             except Exception as e:
                 self.print_color(f"Leverage change failed: {e}", self.Fore.YELLOW)
             
@@ -1060,9 +1122,8 @@ def get_ai_close_decision_v2(self, pair, trade):
             if current_price < trail_price:
                 return {"should_close": True, "close_type": "SMART_TRAIL", "close_reason": "3×ATR trailing stop hit", "confidence": 95}
 
-        # 5. NEW: Winner-turn-loser ကို ဖြေလျှော့ → peak +12% ကျရင်မှ full close
-        if trade['peak_pnl'] >= 12.0 and current_pnl <= 4.0:
-            return {"should_close": True, "close_type": "WINNER_TURN_LOSER_V2", "close_reason": f"Peak {trade['peak_pnl']:.1f}% → now {current_pnl:.1f}% ≤4%", "confidence": 92}
+        # 5. ❌❌❌ WINNER-TURN-LOSER LOGIC REMOVED COMPLETELY ❌❌❌
+        # အမြတ်ကနေ အရှုံးပြန်မဖြစ်တော့ဘူး
 
         return {"should_close": False}
 
@@ -1331,7 +1392,7 @@ methods = [
 for method in methods:
     setattr(FullyAutonomous1HourAITrader, method.__name__, method)
 
-# Paper trading class - V2 version integrated
+# Paper trading class - V2 version integrated with NO WINNER-TURN-LOSER
 class FullyAutonomous1HourPaperTrader:
     def __init__(self, real_bot):
         self.real_bot = real_bot
@@ -1360,6 +1421,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color(f"🔄 REVERSE POSITION FEATURE: ENABLED", self.Fore.MAGENTA + self.Style.BRIGHT)
         self.real_bot.print_color(f"🎯 BOUNCE-PROOF 3-LAYER EXIT V2: ENABLED", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
+        self.real_bot.print_color(f"🚫 WINNER-TURN-LOSER: COMPLETELY REMOVED", self.Fore.RED + self.Style.BRIGHT)
     
     def load_paper_history(self):
         """Load PAPER trading history"""
@@ -1491,7 +1553,7 @@ class FullyAutonomous1HourPaperTrader:
             return False
 
     def get_ai_close_decision_v2(self, pair, trade):
-        """BOUNCE-PROOF 3-LAYER EXIT V2 – PAPER TRADING VERSION"""
+        """BOUNCE-PROOF 3-LAYER EXIT V2 – PAPER TRADING VERSION (NO WINNER-TURN-LOSER)"""
         try:
             current_price = self.real_bot.get_current_price(pair)
             current_pnl = self.calculate_current_pnl(trade, current_price)
@@ -1506,50 +1568,50 @@ class FullyAutonomous1HourPaperTrader:
             if current_pnl <= -5.0:
                 return {"should_close": True, "close_type": "STOP_LOSS", "close_reason": "Hard -5% rule", "confidence": 100}
 
-            # 2. NEW: Oversold Protection – RSI 1H/4H < 33 ဆိုရင် short ကို မထိရုံထိ ကိုင်ထား
-            mtf = self.real_bot.get_price_history(pair).get('mtf_analysis', {})
-            rsi_1h = mtf.get('1h', {}).get('rsi', 50)
-            rsi_4h = mtf.get('4h', {}).get('rsi', 50)
-            if trade['direction'] == 'SHORT' and (rsi_1h < 33 or rsi_4h < 33):
-                # Bounce risk မြင့်နေရင် trail ကို ပိုကျယ်အောင် လုပ်၊ partial မယူတော့
-                pass
-
-            # 3. NEW: Dynamic Partial – +9% မှာ မဟုတ်တော့ဘူး → +15% မှ ယူမယ် + ပမာဏ 40% ပဲ
-            if current_pnl >= 15.0 and not trade.get('partial_taken', False):
+            # 2. 60% Partial @ +9%
+            if trade['peak_pnl'] >= 9.0 and not trade.get('partial_done', False):
+                trade['partial_done'] = True
                 return {
                     "should_close": True,
-                    "close_type": "PARTIAL_40",
-                    "close_reason": f"Profit >=15% → secure 40% only (current {current_pnl:.1f}%)",
-                    "confidence": 98,
-                    "partial_percent": 40
+                    "partial_percent": 60,
+                    "close_type": "PARTIAL_60",
+                    "reason": f"PAPER: Lock 60% profit @ +{trade['peak_pnl']:.1f}%",
+                    "confidence": 100
                 }
 
-            # 4. NEW: Smarter Trailing – 3×ATR + RSI divergence check
-            atr_14 = 0.001
-            try:
-                if self.real_bot.binance:
-                    klines = self.real_bot.binance.futures_klines(symbol=pair, interval='1h', limit=50)
-                    if len(klines) >= 15:
-                        highs = [float(k[2]) for k in klines]
-                        lows = [float(k[3]) for k in klines]
-                        closes = [float(k[4]) for k in klines]
-                        tr = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(klines))]
-                        atr_14 = sum(tr[-14:]) / 14
-            except: pass
-            
-            trail_price = trade['entry_price']
-            if trade['direction'] == 'SHORT':
-                trail_price = current_price + (3 * atr_14)  # ပိုကျယ်အောင်
-                if current_price > trail_price:
-                    return {"should_close": True, "close_type": "SMART_TRAIL", "close_reason": "3×ATR trailing stop hit", "confidence": 95}
-            else:
-                trail_price = current_price - (3 * atr_14)
-                if current_price < trail_price:
-                    return {"should_close": True, "close_type": "SMART_TRAIL", "close_reason": "3×ATR trailing stop hit", "confidence": 95}
+            # 3. Instant Breakeven @ +12%
+            if trade['peak_pnl'] >= 12.0 and not trade.get('breakeven_done', False):
+                trade['breakeven_done'] = True
+                return {
+                    "should_close": False,
+                    "move_sl_to": trade['entry_price'],
+                    "close_type": "BREAKEVEN_ACTIVATED",
+                    "reason": f"PAPER: Breakeven activated @ +{trade['peak_pnl']:.1f}%",
+                    "confidence": 100
+                }
 
-            # 5. NEW: Winner-turn-loser ကို ဖြေလျှော့ → peak +12% ကျရင်မှ full close
-            if trade['peak_pnl'] >= 12.0 and current_pnl <= 4.0:
-                return {"should_close": True, "close_type": "WINNER_TURN_LOSER_V2", "close_reason": f"Peak {trade['peak_pnl']:.1f}% → now {current_pnl:.1f}% ≤4%", "confidence": 92}
+            # 4. Dynamic Profit Floor (75% of Peak)
+            if trade['peak_pnl'] >= 15.0:
+                profit_floor = trade['peak_pnl'] * 0.75
+                if current_pnl <= profit_floor and trade.get('partial_done', False):
+                    return {
+                        "should_close": True,
+                        "partial_percent": 100,
+                        "close_type": "PROFIT_FLOOR_HIT",
+                        "reason": f"PAPER: Profit floor hit {profit_floor:.1f}%",
+                        "confidence": 100
+                    }
+
+            # 5. 2×ATR Trailing
+            if trade.get('partial_done', False) and trade['peak_pnl'] >= 9.0:
+                atr_14 = 0.001
+                trail_price = current_price + (2 * atr_14) if trade['direction'] == 'LONG' else current_price - (2 * atr_14)
+                if trade['direction'] == 'LONG' and current_price <= trail_price:
+                    return {"should_close": True, "partial_percent": 100, "close_type": "TRAILING_HIT", "reason": "PAPER: 2×ATR Trailing"}
+                if trade['direction'] == 'SHORT' and current_price >= trail_price:
+                    return {"should_close": True, "partial_percent": 100, "close_type": "TRAILING_HIT", "reason": "PAPER: 2×ATR Trailing"}
+
+            # ❌❌❌ NO WINNER-TURN-LOSER LOGIC - COMPLETELY REMOVED ❌❌❌
 
             return {"should_close": False}
 
@@ -1687,6 +1749,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color("=" * 90, self.Fore.CYAN)
         self.real_bot.print_color(f"🎯 MODE: BOUNCE-PROOF 3-LAYER EXIT V2", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color(f"⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
+        self.real_bot.print_color(f"🚫 WINNER-TURN-LOSER: COMPLETELY REMOVED", self.Fore.RED + self.Style.BRIGHT)
         
         active_count = 0
         total_unrealized = 0
@@ -1819,6 +1882,7 @@ class FullyAutonomous1HourPaperTrader:
         self.real_bot.print_color("🔄 REVERSE POSITION: ENABLED", self.Fore.MAGENTA + self.Style.BRIGHT)
         self.real_bot.print_color("🎯 BOUNCE-PROOF 3-LAYER EXIT V2: ACTIVE", self.Fore.YELLOW + self.Style.BRIGHT)
         self.real_bot.print_color("⏰ MONITORING: 3 MINUTE INTERVAL", self.Fore.RED + self.Style.BRIGHT)
+        self.real_bot.print_color("🚫 WINNER-TURN-LOSER: COMPLETELY REMOVED", self.Fore.RED + self.Style.BRIGHT)
         
         self.paper_cycle_count = 0
         while True:
