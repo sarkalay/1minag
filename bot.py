@@ -826,8 +826,7 @@ def get_current_price(self, pair):
         else:
             # Mock prices for paper trading
             mock_prices = {
-                "BNBUSDT": 300,
-                "SOLUSDT": 180, "AVAXUSDT": 35
+                "SOLUSDT": 180
             }
             return mock_prices.get(pair, 100)
     except:
@@ -1353,7 +1352,7 @@ class FullyAutonomous1HourPaperTrader:
         self.paper_positions = {}
         self.paper_history_file = "fully_autonomous_1hour_paper_trading_history.json"
         self.paper_history = self.load_paper_history()
-        self.available_pairs = ["BNBUSDT", "SOLUSDT", "AVAXUSDT"]
+        self.available_pairs = ["SOLUSDT"]
         self.max_concurrent_trades = 6
         
         self.real_bot.print_color("🤖 FULLY AUTONOMOUS PAPER TRADER INITIALIZED!", self.Fore.GREEN + self.Style.BRIGHT)
