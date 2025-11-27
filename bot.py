@@ -322,10 +322,11 @@ def add_trade_to_history(self, trade_data):
         # === အသစ်: Intelligent Auto ML Logging (ဒီတစ်လိုင်းတည်း!) ===
         try:
             from data_collector import log_trade_for_ml
-            pair = trade_data['pair']
-            log_trade_for_ml(trade_data, market_data=self.market_conditions.get(pair))
+            # market_data မရှိရင်လည်း None ပို့လို့ ရအောင် လုပ်ထားပြီးသား
+            log_trade_for_ml(trade_data)
+            print("ML data logged → ml_training_data.csv updated!")
         except Exception as e:
-            print(f"[WARNING] ML logging failed: {e}")
+            print(f"[ML LOG ERROR] {e}")
         # === ဒီအထိပဲ လုံလောက်ပြီ! ===
         
         # Better display message
@@ -1634,10 +1635,11 @@ class FullyAutonomous1HourPaperTrader:
             # === အသစ်: Intelligent Auto ML Logging (ဒီတစ်လိုင်းတည်း!) ===
             try:
                 from data_collector import log_trade_for_ml
-                pair = trade_data['pair']
-                log_trade_for_ml(trade_data, market_data=self.real_bot.market_conditions.get(pair))
+                # market_data မရှိရင်လည်း None ပို့လို့ ရအောင် လုပ်ထားပြီးသား
+                log_trade_for_ml(trade_data)
+                print("ML data logged → ml_training_data.csv updated!")
             except Exception as e:
-                print(f"[WARNING] ML logging failed: {e}")
+                print(f"[ML LOG ERROR] {e}")
             # === ဒီအထိပဲ လုံလောက်ပြီ! ===
             
             # Better display message
